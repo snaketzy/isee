@@ -85,11 +85,39 @@
       window.setTimeout(function() {
         if (loading) loading.classList.add('hidden');
       }, 1500);
+
+      var ua = navigator.userAgent || '';
+      var isChromium = /Chrome|Chromium|Edg|OPR|Brave/i.test(ua);
+      var preferredRenderer = isChromium ? 'html' : 'canvaskit';
+
+      function tryInitialize(engineInitializer, renderer) {
+        return engineInitializer.initializeEngine({
+          renderer: renderer,
+          hostElement: null,
+          assetBase: null,
+        }).then(function(engine) {
+          return engine.runApp().then(function() { return engine; });
+        });
+      }
+
       _flutter.loader.load({
         onEntrypointLoaded: async function(engineInitializer) {
-          let engine = await engineInitializer.initializeEngine();
-          await engine.runApp();
-          if (loading) loading.classList.add('hidden');
+          try {
+            await tryInitialize(engineInitializer, preferredRenderer);
+          } catch (err) {
+            console.warn('[iSEE] Primary renderer (' + preferredRenderer + ') failed, fallback to html. Error:', err);
+            try {
+              await tryInitialize(engineInitializer, 'html');
+            } catch (err2) {
+              try {
+                await tryInitialize(engineInitializer, 'canvaskit');
+              } catch (err3) {
+                console.error('[iSEE] All renderers failed:', err3);
+              }
+            }
+          } finally {
+            if (loading) loading.classList.add('hidden');
+          }
         }
       });
     });
