@@ -56,8 +56,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
     super.initState();
     _player = Player(
       configuration: const PlayerConfiguration(
-        logLevel: MPVLogLevel.warn,
-        vo: 'gpu',
+        logLevel: MPVLogLevel.info,
       ),
     );
     _videoController = VideoController(
