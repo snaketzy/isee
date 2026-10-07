@@ -31,6 +31,60 @@
         ? window.__iHlsStore
         : (window.__iHlsStore = Object.create(null));
       var __i_next_id = 1;
+      var __i_hls_weak = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+      (function patchHlsCtor() {
+        var OrigHls = global.Hls || global.hls;
+        if (!OrigHls || typeof OrigHls !== 'function' || OrigHls.__iPatched__) return;
+        function iHls() {
+          var a = [];
+          for (var i = 0; i < arguments.length; i++) a.push(arguments[i]);
+          var ctx = Object.create(OrigHls.prototype);
+          var inst = OrigHls.apply(ctx, a) || ctx;
+          try {
+            var origAttach = inst.attachMedia;
+            if (typeof origAttach === 'function') {
+              inst.attachMedia = function (media) {
+                try {
+                  if (__i_hls_weak && media) __i_hls_weak.set(media, inst);
+                } catch (_) {}
+                try { return origAttach.apply(this, arguments); } catch (err) { throw err; }
+              };
+            }
+            var origDestroy = inst.destroy;
+            if (typeof origDestroy === 'function') {
+              inst.destroy = function () {
+                try {
+                  if (__i_hls_weak) {
+                    var iter = __i_hls_store;
+                    var ks = Object.keys(iter);
+                    for (var kk = 0; kk < ks.length; kk++) {
+                      if (iter[ks[kk]] === inst) {
+                        var vv = null;
+                        var all = [];
+                        walkForVideos(document.documentElement, all);
+                        for (var vvi = 0; vvi < all.length; vvi++) {
+                          try { if (all[vvi] && all[vvi][__i_hls_key] === ks[kk]) { vv = all[vvi]; break; } } catch (_) {}
+                        }
+                        if (vv) try { __i_hls_weak.delete(vv); } catch (_) {}
+                      }
+                    }
+                  }
+                } catch (_) {}
+                try { return origDestroy.apply(this, arguments); } catch (err) { throw err; }
+              };
+            }
+          } catch (_) {}
+          return inst;
+        }
+        var pks = Object.keys(OrigHls);
+        for (var pk = 0; pk < pks.length; pk++) {
+          try { iHls[pks[pk]] = OrigHls[pks[pk]]; } catch (_) {}
+        }
+        iHls.prototype = OrigHls.prototype;
+        iHls.__iPatched__ = true;
+        global.Hls = iHls;
+        global.hls = iHls;
+      })();
       function walkForVideos(root, out) {
         if (!root) return;
         try {
@@ -112,12 +166,42 @@
         if (curKey) {
           var existing = __i_hls_store[curKey];
           if (existing) {
-            // Already owned; if user sent non-empty srcUrl but differs, update source
             if (srcUrl && (existing.url || '') !== srcUrl) {
               try { if (typeof existing.loadSource === 'function') existing.loadSource(srcUrl); existing.url = srcUrl; } catch (_) {}
             }
             return curKey;
           }
+        }
+        if (__i_hls_weak) {
+          try {
+            var steal = __i_hls_weak.get(video);
+            if (steal && typeof steal.levels !== 'undefined') {
+              var stealKey = 'iHls_' + (__i_next_id++) + '_' + Date.now();
+              __i_hls_store[stealKey] = steal;
+              writeKey(video, stealKey);
+              steal.url = srcUrl || steal.url || '';
+              var stealCtor = global.Hls || global.hls;
+              if (stealCtor && stealCtor.Events && !steal.__iHlsCbBound__) {
+                steal.__iHlsCbBound__ = true;
+                try {
+                  steal.on(stealCtor.Events.LEVEL_SWITCHED, function (_e, data) {
+                    try {
+                      var idx = typeof data === 'object' && data ? data.level : -1;
+                      if (idx >= 0 && Array.isArray(steal.levels) && steal.levels[idx]) {
+                        var h = steal.levels[idx].height || 0;
+                        if (h > 0) {
+                          try { video.dispatchEvent(new CustomEvent('iHlsLevelSwitched', { detail: { height: h, level: idx } })); } catch (_) {}
+                          var cbs = video.__iHlsCb;
+                          if (typeof cbs === 'function') { try { cbs(h); } catch (_) {} }
+                        }
+                      }
+                    } catch (_) {}
+                  });
+                } catch (_) {}
+              }
+              return stealKey;
+            }
+          } catch (_) {}
         }
         if (srcUrl.length === 0) return '';
         if (isDeadVideo(video)) return '';
@@ -137,12 +221,7 @@
             newKey = 'iHls_' + (__i_next_id++) + '_' + Date.now();
             __i_hls_store[newKey] = hls;
             writeKey(video, newKey);
-            hls.attachMedia(video);
-            hls.loadSource(srcUrl);
             hls.url = srcUrl;
-            hls.on(HlsCtor.Events.MANIFEST_PARSED, function (_e, _d) {
-              try { hls.startLoad(); } catch (_) {}
-            });
             hls.on(HlsCtor.Events.LEVEL_SWITCHED, function (_e, data) {
               try {
                 var idx = typeof data === 'object' && data ? data.level : -1;
@@ -155,6 +234,11 @@
                   }
                 }
               } catch (_) {}
+            });
+            hls.attachMedia(video);
+            hls.loadSource(srcUrl);
+            hls.on(HlsCtor.Events.MANIFEST_PARSED, function (_e, _d) {
+              try { hls.startLoad(); } catch (_) {}
             });
             return newKey;
           } catch (err) {

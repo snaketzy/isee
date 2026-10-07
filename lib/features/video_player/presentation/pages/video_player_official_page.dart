@@ -188,16 +188,29 @@ class _VideoPlayerOfficialPageState
       final jsEl = _pickLatestVideoElementJs();
       if (jsEl == null) continue;
       final existing = _attachHlsToJs(jsEl, '');
-      if (existing.isNotEmpty) return;
+      if (existing.isNotEmpty) {
+        if (!_ownedHlsKeys.contains(existing)) {
+          _ownedHlsKeys.add(existing);
+          try {
+            iHlsRegisterQualitySwitchCb(jsEl, _qualitySwitchCb());
+          } catch (_) {}
+        }
+        return;
+      }
       final htmlEl = _pickLatestVideoElement();
       bool matches = false;
       if (htmlEl != null) {
         final s = htmlEl.src;
-        if (s == url ||
-            s.startsWith(url) ||
-            s.contains('stream.mux.com/') ||
-            s.contains('.m3u8')) {
-          matches = true;
+        final cs = htmlEl.currentSrc;
+        final hasSrc = s.isNotEmpty || cs.isNotEmpty;
+        final vw = htmlEl.videoWidth;
+        final vh = htmlEl.videoHeight;
+        final hasDim = vw > 0 && vh > 0;
+        if (hasSrc && hasDim) matches = true;
+        if (s == url || s.startsWith(url) || s.contains('stream.mux.com/') || s.contains('.m3u8')) matches = true;
+        if (cs == url || cs.startsWith(url) || cs.contains('stream.mux.com/') || cs.contains('.m3u8')) matches = true;
+        if (s.startsWith('blob:') || cs.startsWith('blob:')) {
+          if (hasDim) matches = true;
         }
       }
       if (!matches) continue;
