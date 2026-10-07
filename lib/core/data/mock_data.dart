@@ -13,11 +13,21 @@ class MockData {
   static const String placeholderVideo =
       'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
 
+  static const String muxTest4Hls =
+      'https://stream.mux.com/dbwZ9W4aH4RGj02CUPNGa201025O01aBbmq6FG9unAow02Ak.m3u8';
+
   static Map<VideoQuality, String> get _videoUrls => {
         VideoQuality.q360p: placeholderVideo,
         VideoQuality.q480p: placeholderVideo,
         VideoQuality.q720p: placeholderVideo,
         VideoQuality.q1080p: placeholderVideo,
+      };
+
+  static Map<VideoQuality, String> get _videoUrlsMuxTest4 => {
+        VideoQuality.q360p: muxTest4Hls,
+        VideoQuality.q480p: muxTest4Hls,
+        VideoQuality.q720p: muxTest4Hls,
+        VideoQuality.q1080p: muxTest4Hls,
       };
 
   static List<Episode> _generateEpisodes(String videoId, int season, int count) {
@@ -102,9 +112,9 @@ class MockData {
       directors: const ['李刚'],
       posterUrl: _img('v002'),
       backdropUrl: _bd('v002'),
-      trailerUrl: placeholderVideo,
-      mainVideoUrl: placeholderVideo,
-      mainVideoUrls: _videoUrls,
+      trailerUrl: muxTest4Hls,
+      mainVideoUrl: muxTest4Hls,
+      mainVideoUrls: _videoUrlsMuxTest4,
       addedAt: DateTime.now().subtract(const Duration(days: 3)),
       isTrending: true,
       isNewRelease: true,

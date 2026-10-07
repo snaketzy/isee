@@ -83,30 +83,43 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
   Future<void> _load(String url) async {
     setState(() {
       _initialized = false;
+      _position = Duration.zero;
+      _total = Duration.zero;
+      _isPlaying = false;
       _currentUrl = url;
     });
     await _controller?.dispose();
-    final c = VideoPlayerController.networkUrl(Uri.parse(url));
+    final c = VideoPlayerController.networkUrl(
+      Uri.parse(url),
+      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+    );
     _controller = c;
+    c.addListener(_onListen);
     try {
-      await c.initialize();
-      c.addListener(_onListen);
+      await c.initialize().timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => Future.value(),
+      );
       if (mounted) {
         setState(() {
-          _initialized = true;
+          _initialized = c.value.isInitialized;
           _total = c.value.duration;
         });
-        c.play();
+        if (c.value.isInitialized) {
+          await c.play();
+        }
       }
     } catch (e) {
       debugPrint('Video load error: $e');
-      if (mounted) setState(() => _initialized = true);
+      if (!mounted) return;
+      setState(() => _initialized = true);
     }
   }
 
   void _onListen() {
     if (!mounted || _controller == null) return;
     final c = _controller!;
+    if (!c.value.isInitialized) return;
     if (c.value.isPlaying != _isPlaying) {
       setState(() => _isPlaying = c.value.isPlaying);
     }
@@ -122,59 +135,62 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
   }
 
   void _togglePlay() {
+    _resetControlsTimer();
     if (_controller == null) return;
     if (_controller!.value.isPlaying) {
       _controller!.pause();
     } else {
       _controller!.play();
     }
-    _resetControlsTimer();
+  }
+
+  Duration _clampDuration(Duration d, Duration min, Duration max) {
+    if (d < min) return min;
+    if (d > max) return max;
+    return d;
   }
 
   void _seekRelative(Duration d) {
-    if (_controller == null) return;
-    final sum = _position + d;
-    final t = sum < Duration.zero
-        ? Duration.zero
-        : sum > _total
-            ? _total
-            : sum;
-    _controller!.seekTo(t);
     _resetControlsTimer();
+    final t = _clampDuration(_position + d, Duration.zero, _total);
+    if (_controller == null) return;
+    _controller!.seekTo(t);
   }
 
   void _seekTo(Duration d) {
+    _resetControlsTimer();
     if (_controller == null) return;
     _controller!.seekTo(d);
-    _resetControlsTimer();
   }
 
   void _toggleMute() {
-    if (_controller == null) return;
+    _resetControlsTimer();
     setState(() {
       _muted = !_muted;
-      _controller!.setVolume(_muted ? 0.0 : _volume);
     });
-    _resetControlsTimer();
+    if (_controller != null) {
+      _controller!.setVolume(_muted ? 0.0 : _volume);
+    }
   }
 
   void _setVolume(double v) {
-    if (_controller == null) return;
     setState(() {
       _volume = v;
       _muted = v == 0;
-      _controller!.setVolume(v);
     });
+    if (_controller != null) {
+      _controller!.setVolume(v);
+    }
   }
 
   void _setSpeed(double s) {
-    if (_controller == null) return;
+    _resetControlsTimer();
     setState(() {
       _playbackSpeed = s;
       _speedMenuOpen = false;
     });
+    if (_controller == null) return;
     _controller!.setPlaybackSpeed(s);
-    _resetControlsTimer();
   }
 
   void _showControls() {
@@ -212,8 +228,6 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
   @override
   Widget build(BuildContext context) {
     final video = ref.watch(videoByIdProvider(widget.videoId));
-    final screen = MediaQuery.of(context).size;
-
     return Scaffold(
       backgroundColor: Colors.black,
       body: MouseRegion(
@@ -521,7 +535,13 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
     final totalInMs = _total.inMilliseconds;
     final posInMs = _position.inMilliseconds;
     final max = totalInMs > 0 ? totalInMs.toDouble() : 1.0;
-    final value = (posInMs.toDouble().clamp(0.0, max)) / max;
+    final v = posInMs.toDouble();
+    final clamped = v < 0.0
+        ? 0.0
+        : v > max
+            ? max
+            : v;
+    final value = clamped / max;
     return Stack(
       alignment: Alignment.center,
       children: [

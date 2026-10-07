@@ -11,6 +11,7 @@
 .svn/
 .swiftpm/
 migrate_working_dir/
+.video/
 
 # IntelliJ related
 *.iml
@@ -46,3 +47,15 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# 🔒 Cloudflare & Mux 凭据（绝对不能提交到 Git）
+.env
+.env.*
+!.env.example
+rclone.conf
+cloudflare.env
+mux.env
+mux_upload.log
+rclone_upload.log
+video_benchmark/
+scripts/.env*

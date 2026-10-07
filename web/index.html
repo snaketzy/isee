@@ -12,6 +12,7 @@
   <link rel="icon" type="image/png" href="favicon.png"/>
   <title>iSEE - 流媒体视频平台</title>
   <link rel="manifest" href="manifest.json">
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js" type="application/javascript"></script>
   <style>
     html, body {
       margin: 0;
@@ -86,9 +87,6 @@
         if (loading) loading.classList.add('hidden');
       }, 1500);
       _flutter.loader.load({
-        serviceWorker: {
-          serviceWorkerVersion: serviceWorkerVersion,
-        },
         onEntrypointLoaded: async function(engineInitializer) {
           let engine = await engineInitializer.initializeEngine();
           await engine.runApp();
