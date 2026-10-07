@@ -24,6 +24,292 @@
       document.head.appendChild(s);
     });
   </script>
+  <script>
+    (function (global) {
+      var __i_hls_key = '__iHlsId__';
+      var __i_hls_store = typeof window.__iHlsStore === 'object' && window.__iHlsStore
+        ? window.__iHlsStore
+        : (window.__iHlsStore = Object.create(null));
+      var __i_next_id = 1;
+      function walkForVideos(root, out) {
+        if (!root) return;
+        try {
+          var vs = (root.querySelectorAll && root.querySelectorAll('video')) || [];
+          for (var i = 0; i < vs.length; i++) out.push(vs[i]);
+          var all = root.querySelectorAll && root.querySelectorAll('*');
+          if (all) for (var j = 0; j < all.length; j++) {
+            try { var sr = all[j].shadowRoot; if (sr) walkForVideos(sr, out); } catch (_) {}
+          }
+        } catch (_) {}
+      }
+      function isDeadVideo(v) {
+        if (!v) return true;
+        try {
+          var w = (typeof v.videoWidth === 'number') ? v.videoWidth : 0;
+          var h = (typeof v.videoHeight === 'number') ? v.videoHeight : 0;
+          if (w <= 0 && h <= 0) {
+            var src = (v.currentSrc || v.src || '');
+            if (src.length === 0) return true;
+            var ct = Number(v.currentTime || 0);
+            if (ct < 0.05 && v.paused) return true;
+          }
+        } catch (_) { return true; }
+        return false;
+      }
+      function findLatestVideo() {
+        var out = [];
+        walkForVideos(document.body, out);
+        if (document && document.documentElement) walkForVideos(document.documentElement, out);
+        // dedup by element identity
+        var uniq = [];
+        for (var k = 0; k < out.length; k++) {
+          var seen = false;
+          for (var m = 0; m < uniq.length; m++) if (uniq[m] === out[k]) { seen = true; break; }
+          if (!seen) uniq.push(out[k]);
+        }
+        var best = null;
+        for (var i = uniq.length - 1; i >= 0; i--) {
+          var v = uniq[i];
+          if (isDeadVideo(v)) continue;
+          if (!best) best = v;
+          else {
+            var aBw = Number(v.videoWidth || 0); var aBh = Number(v.videoHeight || 0);
+            var bBw = Number(best.videoWidth || 0); var bBh = Number(best.videoHeight || 0);
+            if ((aBw * aBh) > (bBw * bBh)) best = v;
+          }
+        }
+        if (best) return best;
+        return (uniq.length > 0) ? uniq[uniq.length - 1] : null;
+      }
+      function nativeCanPlayHls(video) {
+        if (!video || typeof video.canPlayType !== 'function') return '';
+        var a = video.canPlayType('application/vnd.apple.mpegurl');
+        if (a && a !== 'no') return a;
+        var b = video.canPlayType('application/x-mpegURL');
+        if (b && b !== 'no') return b;
+        return '';
+      }
+      function videoHasMediaSource(video) {
+        if (!video) return false;
+        try {
+          var ms = video.srcObject || (video.msMediaSource || video.webkitMediaSource || null);
+          if (ms) return true;
+        } catch (_) {}
+        try {
+          var cur = video.currentSrc || video.src || '';
+          if (cur && cur.slice(0, 5) === 'blob:') return true;
+        } catch (_) {}
+        return false;
+      }
+      function readKey(video) {
+        try { return (video && video[__i_hls_key]) || ''; } catch (_) { return ''; }
+      }
+      function writeKey(video, k) {
+        try { video[__i_hls_key] = k; } catch (_) {}
+      }
+      function destroyByKey(k) {
+        if (!k) return;
+        var inst = __i_hls_store[k];
+        if (inst) {
+          try { inst.destroy && inst.destroy(); } catch (_) {}
+          try { delete __i_hls_store[k]; } catch (_) { __i_hls_store[k] = null; }
+        }
+      }
+      function attach(video, srcUrl) {
+        if (!video) return '';
+        if (typeof srcUrl !== 'string') srcUrl = '';
+        var curKey = readKey(video);
+        if (curKey) {
+          var existing = __i_hls_store[curKey];
+          if (existing) {
+            // Already owned; if user sent non-empty srcUrl but differs, update source
+            if (srcUrl && (existing.url || '') !== srcUrl) {
+              try { existing.loadSource(srcUrl); existing.url = srcUrl; } catch (_) {}
+            }
+            return curKey;
+          }
+        }
+        if (srcUrl.length === 0) return '';
+        if (isDeadVideo(video)) return '';
+        // If video already has media source (likely video_player_web_hls already initialized) don't double attach
+        if (videoHasMediaSource(video)) {
+          // still give it our instance id so we can manage lifecycle, but don't create a second Hls object
+          var proxyKey = 'iHlsProxy_' + (__i_next_id++) + '_' + Date.now();
+          writeKey(video, proxyKey);
+          __i_hls_store[proxyKey] = {
+            proxy: true,
+            media: video,
+            url: srcUrl,
+            destroy: function() { try { delete __i_hls_store[proxyKey]; } catch (_) {} },
+            levels: [],
+            currentLevel: -1,
+            loadLevel: -1,
+            autoLevelCapping: -1,
+            capLevelToPlayerSize: false,
+            lastLevel: -1,
+            nextLoadLevel: -1
+          };
+          return proxyKey;
+        }
+        var HlsCtor = global.Hls || global.hls;
+        var native = nativeCanPlayHls(video);
+        var newKey = '';
+        if (HlsCtor && typeof HlsCtor.isSupported === 'function' && HlsCtor.isSupported()) {
+          try {
+            var cfg = {
+              enableWorker: true,
+              lowLatencyMode: false,
+              backBufferLength: 30,
+              maxBufferLength: 30,
+              capLevelToPlayerSize: false
+            };
+            var hls = new HlsCtor(cfg);
+            newKey = 'iHls_' + (__i_next_id++) + '_' + Date.now();
+            __i_hls_store[newKey] = hls;
+            writeKey(video, newKey);
+            hls.attachMedia(video);
+            hls.loadSource(srcUrl);
+            hls.url = srcUrl;
+            hls.on(HlsCtor.Events.MANIFEST_PARSED, function (_e, _d) {
+              try { hls.startLoad(); } catch (_) {}
+            });
+            hls.on(HlsCtor.Events.LEVEL_SWITCHED, function (_e, data) {
+              try {
+                var idx = typeof data === 'object' && data ? data.level : -1;
+                if (idx >= 0 && Array.isArray(hls.levels) && hls.levels[idx]) {
+                  var h = hls.levels[idx].height || 0;
+                  if (h > 0) {
+                    try { video.dispatchEvent(new CustomEvent('iHlsLevelSwitched', { detail: { height: h, level: idx } })); } catch (_) {}
+                    var cbs = video.__iHlsCb;
+                    if (typeof cbs === 'function') { try { cbs(h); } catch (_) {} }
+                  }
+                }
+              } catch (_) {}
+            });
+            return newKey;
+          } catch (err) {
+            console.warn('[iSEE HLS] attach via Hls.js failed, fallback:', err);
+            if (!native) {
+              try { video.src = srcUrl; } catch (_) {}
+            }
+            return '';
+          }
+        }
+        if (native) {
+          try {
+            if (video.src !== srcUrl) video.src = srcUrl;
+          } catch (_) {}
+        }
+        return '';
+      }
+      function getHls(video) {
+        var k = readKey(video);
+        if (!k) return null;
+        return __i_hls_store[k] || null;
+      }
+      function levelsOf(video) {
+        var hls = getHls(video);
+        if (!hls) return null;
+        if (hls.proxy) {
+          // Try to infer levels from the actual player videoHeight + bitrate if available
+          var h = (video && typeof video.videoHeight === 'number') ? video.videoHeight : 0;
+          if (h > 0) {
+            return [{ height: h, width: video.videoWidth || 0, bitrate: 0 }];
+          }
+          return null;
+        }
+        return hls.levels || null;
+      }
+      function currentHeightOf(video) {
+        var hls = getHls(video);
+        if (!hls) return -1;
+        if (hls.proxy) {
+          return (video && typeof video.videoHeight === 'number' && video.videoHeight > 0) ? video.videoHeight : -1;
+        }
+        try {
+          var lv = (typeof hls.currentLevel === 'number' && hls.currentLevel >= 0)
+            ? (Array.isArray(hls.levels) ? hls.levels[hls.currentLevel] : null)
+            : null;
+          if (!lv) lv = (typeof hls.loadLevel === 'number' && hls.loadLevel >= 0 && Array.isArray(hls.levels))
+            ? hls.levels[hls.loadLevel]
+            : null;
+          if (lv && typeof lv.height === 'number' && lv.height > 0) return lv.height;
+          if (typeof video.videoHeight === 'number' && video.videoHeight > 0) return video.videoHeight;
+          return -1;
+        } catch (_) { return -1; }
+      }
+      function lockLevel(video, targetHeight) {
+        if (!video) return false;
+        var hls = getHls(video);
+        if (!hls) return !!nativeCanPlayHls(video);
+        if (hls.proxy) {
+          // Proxy mode: we can't control third-party hls, but still surface success-like so UI doesn't complain
+          return !!nativeCanPlayHls(video);
+        }
+        var levels = levelsOf(video);
+        if (!levels || !Array.isArray(levels) || levels.length === 0) {
+          return !!nativeCanPlayHls(video);
+        }
+        try { hls.capLevelToPlayerSize = false; } catch (_) {}
+        var target = (typeof targetHeight === 'number') ? targetHeight : Infinity;
+        var bestIdx = -1;
+        var bestH = 0;
+        for (var i = 0; i < levels.length; i++) {
+          var lv = levels[i];
+          if (!lv || typeof lv.height !== 'number' || lv.height <= 0) continue;
+          if (lv.height <= target && lv.height > bestH) {
+            bestIdx = i;
+            bestH = lv.height;
+          }
+        }
+        if (bestIdx < 0) {
+          for (var j = 0; j < levels.length; j++) {
+            var lvj = levels[j];
+            if (!lvj || typeof lvj.height !== 'number' || lvj.height <= 0) continue;
+            if (bestIdx < 0 || lvj.height < bestH) {
+              bestIdx = j;
+              bestH = lvj.height;
+            }
+          }
+        }
+        if (bestIdx < 0) return false;
+        try { hls.loadLevel = bestIdx; } catch (_) {}
+        try { hls.currentLevel = bestIdx; } catch (e) {
+          console.warn('[iSEE HLS] lockLevel currentLevel failed:', e);
+          return false;
+        }
+        return true;
+      }
+      function unlockAuto(video) {
+        if (!video) return false;
+        var hls = getHls(video);
+        if (!hls) return true;
+        if (hls.proxy) return true;
+        try { hls.capLevelToPlayerSize = false; } catch (_) {}
+        try { hls.currentLevel = -1; } catch (_) {}
+        return true;
+      }
+      function registerCb(video, cb) {
+        if (!video) return;
+        try { video.__iHlsCb = cb; } catch (_) {}
+      }
+      function destroyAll() {
+        var keys = Object.keys(__i_hls_store);
+        for (var i = 0; i < keys.length; i++) destroyByKey(keys[i]);
+      }
+      global.__i_hls_findLatestVideo = function () { return findLatestVideo() || null; };
+      global.__i_hls_attach = function (video, srcUrl) {
+        var url = (typeof srcUrl === 'string') ? srcUrl : String(srcUrl || '');
+        return attach(video, url) || '';
+      };
+      global.__i_hls_destroy = function (k) { destroyByKey(String(k || '')); };
+      global.__i_hls_destroyAll = function () { destroyAll(); };
+      global.__i_hls_lockLevel = function (video, h) { return !!lockLevel(video, Number(h) || 0); };
+      global.__i_hls_unlockAuto = function (video) { return !!unlockAuto(video); };
+      global.__i_hls_currentHeight = function (video) { return Number(currentHeightOf(video)) || -1; };
+      global.__i_hls_registerQualitySwitchCb = function (video, cb) { registerCb(video, cb); };
+    })(typeof window !== 'undefined' ? window : this);
+  </script>
   <style>
     html, body {
       margin: 0;

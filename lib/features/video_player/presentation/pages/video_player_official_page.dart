@@ -5,11 +5,35 @@ import 'package:go_router/go_router.dart';
 import 'package:video_player/video_player.dart' as vp;
 import 'dart:async';
 import 'dart:html' as html;
+import 'dart:js_interop';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/models/video_quality.dart';
 import '../../../content/data/providers/content_providers.dart';
 import '../../../content/domain/entities/video_content.dart';
 
+@JS('__i_hls_findLatestVideo')
+external JSObject? iHlsFindLatestVideo();
+
+@JS('__i_hls_attach')
+external JSString iHlsAttach(JSObject videoEl, JSString srcUrl);
+
+@JS('__i_hls_destroy')
+external void iHlsDestroyByKey(JSString key);
+
+@JS('__i_hls_destroyAll')
+external void iHlsDestroyAll();
+
+@JS('__i_hls_lockLevel')
+external JSBoolean iHlsLockLevel(JSObject videoEl, JSNumber targetHeight);
+
+@JS('__i_hls_unlockAuto')
+external JSBoolean iHlsUnlockAuto(JSObject videoEl);
+
+@JS('__i_hls_currentHeight')
+external JSNumber iHlsCurrentHeight(JSObject videoEl);
+
+@JS('__i_hls_registerQualitySwitchCb')
+external void iHlsRegisterQualitySwitchCb(JSObject videoEl, JSFunction cb);
 class VideoPlayerOfficialPage extends ConsumerStatefulWidget {
   final String videoId;
   final int episodeIndex;
@@ -45,6 +69,7 @@ class _VideoPlayerOfficialPageState
   String? _currentUrl;
   Map<VideoQuality, String>? _currentQualityMap;
   bool _isDraggingSlider = false;
+  final Set<String> _ownedHlsKeys = {};
 
   @override
   void initState() {
@@ -58,6 +83,7 @@ class _VideoPlayerOfficialPageState
   @override
   void dispose() {
     _controlsTimer?.cancel();
+    _destroyOwnedHls();
     _controller?.dispose();
     super.dispose();
   }
@@ -72,6 +98,112 @@ class _VideoPlayerOfficialPageState
     }
     if (_currentUrl != null) return _currentUrl!;
     return 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+  }
+
+  JSObject? _pickLatestVideoElementJs() => iHlsFindLatestVideo();
+
+  html.VideoElement? _pickLatestVideoElement() {
+    final jsVid = _pickLatestVideoElementJs();
+    if (jsVid == null) return null;
+    final all = html.querySelectorAll('video');
+    return all.isEmpty ? null : all.last as html.VideoElement;
+  }
+
+  String _attachHlsToJs(JSObject jsVideoEl, String srcUrl) {
+    final s = iHlsAttach(jsVideoEl, srcUrl.toJS);
+    return s.toDart;
+  }
+
+  bool _lockHlsLevelByVideoJs(JSObject jsVideoEl, VideoQuality target) {
+    final h = _qualityHeight(target).toDouble();
+    final ok = iHlsLockLevel(jsVideoEl, h.toJS);
+    return ok.toDart;
+  }
+
+  bool _unlockHlsAutoByVideoJs(JSObject jsVideoEl) {
+    final ok = iHlsUnlockAuto(jsVideoEl);
+    return ok.toDart;
+  }
+
+  int? _currentHlsHeightByVideoJs(JSObject jsVideoEl) {
+    final n = iHlsCurrentHeight(jsVideoEl);
+    final v = n.toDartDouble;
+    if (!v.isFinite || v < 100) return null;
+    return v.toInt();
+  }
+
+  JSFunction _qualitySwitchCb() {
+    void cb(JSNumber h) {
+      if (!mounted) return;
+      final v = h.toDartInt;
+      if (v >= 180 && v <= 16384) {
+        final q = _qualityFromHeight(v);
+        if (q != _quality) setState(() => _quality = q);
+      }
+    }
+    return cb.toJS as JSFunction;
+  }
+
+  void _destroyOwnedHls() {
+    for (final k in List<String>.unmodifiable(_ownedHlsKeys)) {
+      try {
+        iHlsDestroyByKey(k.toJS);
+      } catch (_) {}
+    }
+    _ownedHlsKeys.clear();
+  }
+
+  int _qualityHeight(VideoQuality q) {
+    switch (q) {
+      case VideoQuality.q360p:
+        return 360;
+      case VideoQuality.q480p:
+        return 480;
+      case VideoQuality.q720p:
+        return 720;
+      case VideoQuality.q1080p:
+        return 1080;
+      case VideoQuality.q4k:
+        return 2160;
+    }
+  }
+
+  VideoQuality _qualityFromHeight(int h) {
+    if (h >= 1080) return VideoQuality.q1080p;
+    if (h >= 720) return VideoQuality.q720p;
+    if (h >= 480) return VideoQuality.q480p;
+    return VideoQuality.q360p;
+  }
+
+  Future<void> _postInitializeHlsIfNeeded(String url) async {
+    if (!_isHlsUrl(url)) return;
+    for (int i = 0; i < 25; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      final jsEl = _pickLatestVideoElementJs();
+      if (jsEl == null) continue;
+      final existing = _attachHlsToJs(jsEl, '');
+      if (existing.isNotEmpty) return;
+      final htmlEl = _pickLatestVideoElement();
+      bool matches = false;
+      if (htmlEl != null) {
+        final s = htmlEl.src;
+        if (s == url ||
+            s.startsWith(url) ||
+            s.contains('stream.mux.com/') ||
+            s.contains('.m3u8')) {
+          matches = true;
+        }
+      }
+      if (!matches) continue;
+      final k = _attachHlsToJs(jsEl, url);
+      if (k.isNotEmpty) {
+        _ownedHlsKeys.add(k);
+        try {
+          iHlsRegisterQualitySwitchCb(jsEl, _qualitySwitchCb());
+        } catch (_) {}
+      }
+      return;
+    }
   }
 
   void _initPlayer() {
@@ -131,6 +263,20 @@ class _VideoPlayerOfficialPageState
     try {
       final old = _controller;
       final speed = playbackSpeed ?? _playbackSpeed;
+      // Destroy previous hls and dispose old controller BEFORE new initialize, to avoid double attach on stale videos
+      if (old != null) {
+        try {
+          old.removeListener(_onControllerTick);
+        } catch (_) {}
+      }
+      _destroyOwnedHls();
+      if (old != null) {
+        try {
+          await old.dispose();
+        } catch (_) {}
+        // Small async gap so the browser GC has a chance to drop the dead video element
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+      }
       final newCtl = vp.VideoPlayerController.networkUrl(
         Uri.parse(url),
         httpHeaders: const {},
@@ -147,6 +293,32 @@ class _VideoPlayerOfficialPageState
           await newCtl.setPlaybackSpeed(speed);
         }
       } catch (_) {}
+      bool qualityLocked = false;
+      JSObject? jsVideo;
+      if (_isHlsUrl(url)) {
+        jsVideo = _pickLatestVideoElementJs();
+        if (jsVideo != null) {
+          final existing = _attachHlsToJs(jsVideo, '');
+          if (existing.isEmpty) {
+            final k = _attachHlsToJs(jsVideo, url);
+            if (k.isNotEmpty) _ownedHlsKeys.add(k);
+            try {
+              iHlsRegisterQualitySwitchCb(jsVideo, _qualitySwitchCb());
+            } catch (_) {}
+          } else if (!_ownedHlsKeys.contains(existing)) {
+            _ownedHlsKeys.add(existing);
+            try {
+              iHlsRegisterQualitySwitchCb(jsVideo, _qualitySwitchCb());
+            } catch (_) {}
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+          if (_quality != VideoQuality.q1080p) {
+            qualityLocked = _lockHlsLevelByVideoJs(jsVideo, _quality);
+          } else {
+            _unlockHlsAutoByVideoJs(jsVideo);
+          }
+        }
+      }
       setState(() {
         _initialized = true;
         _total = newCtl.value.duration;
@@ -168,11 +340,15 @@ class _VideoPlayerOfficialPageState
           if (mounted) setState(() => _isPlaying = false);
         }
       }
-      if (old != null) {
-        try {
-          old.removeListener(_onControllerTick);
-          await old.dispose();
-        } catch (_) {}
+      if (_isHlsUrl(url)) {
+        _postInitializeHlsIfNeeded(url).ignore();
+      }
+      if (!qualityLocked &&
+          _isHlsUrl(url) &&
+          _quality != VideoQuality.q1080p) {
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+        final js2 = _pickLatestVideoElementJs();
+        if (js2 != null) _lockHlsLevelByVideoJs(js2, _quality);
       }
     } catch (e, s) {
       debugPrint('VideoPlayerOfficial load error: $e\n$s');
@@ -219,6 +395,35 @@ class _VideoPlayerOfficialPageState
         _isHlsUrl(oldUrl) &&
         _isHlsUrl(newUrl);
     if (sameUrl) {
+      final jsEl = _pickLatestVideoElementJs();
+      bool locked = false;
+      if (jsEl != null) {
+        if (q == VideoQuality.q1080p) {
+          locked = _unlockHlsAutoByVideoJs(jsEl);
+        } else {
+          locked = _lockHlsLevelByVideoJs(jsEl, q);
+        }
+      }
+      if (locked || q == VideoQuality.q1080p) {
+        if (q == VideoQuality.q1080p) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('画质已切换到 1080p（自适应上限），由播放器按带宽选择'),
+              backgroundColor: AppTheme.surfaceLight,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('画质已强制锁定到 ${q.label}，下一个切片开始生效'),
+              backgroundColor: AppTheme.surfaceLight,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
