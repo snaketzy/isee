@@ -89,18 +89,6 @@
         if (b && b !== 'no') return b;
         return '';
       }
-      function videoHasMediaSource(video) {
-        if (!video) return false;
-        try {
-          var ms = video.srcObject || (video.msMediaSource || video.webkitMediaSource || null);
-          if (ms) return true;
-        } catch (_) {}
-        try {
-          var cur = video.currentSrc || video.src || '';
-          if (cur && cur.slice(0, 5) === 'blob:') return true;
-        } catch (_) {}
-        return false;
-      }
       function readKey(video) {
         try { return (video && video[__i_hls_key]) || ''; } catch (_) { return ''; }
       }
@@ -111,7 +99,9 @@
         if (!k) return;
         var inst = __i_hls_store[k];
         if (inst) {
-          try { inst.destroy && inst.destroy(); } catch (_) {}
+          if (inst && typeof inst.destroy === 'function') {
+            try { inst.destroy(); } catch (_) {}
+          }
           try { delete __i_hls_store[k]; } catch (_) { __i_hls_store[k] = null; }
         }
       }
@@ -124,33 +114,13 @@
           if (existing) {
             // Already owned; if user sent non-empty srcUrl but differs, update source
             if (srcUrl && (existing.url || '') !== srcUrl) {
-              try { existing.loadSource(srcUrl); existing.url = srcUrl; } catch (_) {}
+              try { if (typeof existing.loadSource === 'function') existing.loadSource(srcUrl); existing.url = srcUrl; } catch (_) {}
             }
             return curKey;
           }
         }
         if (srcUrl.length === 0) return '';
         if (isDeadVideo(video)) return '';
-        // If video already has media source (likely video_player_web_hls already initialized) don't double attach
-        if (videoHasMediaSource(video)) {
-          // still give it our instance id so we can manage lifecycle, but don't create a second Hls object
-          var proxyKey = 'iHlsProxy_' + (__i_next_id++) + '_' + Date.now();
-          writeKey(video, proxyKey);
-          __i_hls_store[proxyKey] = {
-            proxy: true,
-            media: video,
-            url: srcUrl,
-            destroy: function() { try { delete __i_hls_store[proxyKey]; } catch (_) {} },
-            levels: [],
-            currentLevel: -1,
-            loadLevel: -1,
-            autoLevelCapping: -1,
-            capLevelToPlayerSize: false,
-            lastLevel: -1,
-            nextLoadLevel: -1
-          };
-          return proxyKey;
-        }
         var HlsCtor = global.Hls || global.hls;
         var native = nativeCanPlayHls(video);
         var newKey = '';
@@ -207,17 +177,13 @@
         if (!k) return null;
         return __i_hls_store[k] || null;
       }
+      function hasRealHls(hls) {
+        return !!hls && !hls.proxy && typeof hls.levels !== 'undefined';
+      }
       function levelsOf(video) {
         var hls = getHls(video);
         if (!hls) return null;
-        if (hls.proxy) {
-          // Try to infer levels from the actual player videoHeight + bitrate if available
-          var h = (video && typeof video.videoHeight === 'number') ? video.videoHeight : 0;
-          if (h > 0) {
-            return [{ height: h, width: video.videoWidth || 0, bitrate: 0 }];
-          }
-          return null;
-        }
+        if (hls.proxy) return null;
         return hls.levels || null;
       }
       function currentHeightOf(video) {
@@ -242,10 +208,7 @@
         if (!video) return false;
         var hls = getHls(video);
         if (!hls) return !!nativeCanPlayHls(video);
-        if (hls.proxy) {
-          // Proxy mode: we can't control third-party hls, but still surface success-like so UI doesn't complain
-          return !!nativeCanPlayHls(video);
-        }
+        if (hls.proxy) return false;
         var levels = levelsOf(video);
         if (!levels || !Array.isArray(levels) || levels.length === 0) {
           return !!nativeCanPlayHls(video);
@@ -284,7 +247,7 @@
         if (!video) return false;
         var hls = getHls(video);
         if (!hls) return true;
-        if (hls.proxy) return true;
+        if (hls.proxy) return false;
         try { hls.capLevelToPlayerSize = false; } catch (_) {}
         try { hls.currentLevel = -1; } catch (_) {}
         return true;
@@ -298,6 +261,16 @@
         for (var i = 0; i < keys.length; i++) destroyByKey(keys[i]);
       }
       global.__i_hls_findLatestVideo = function () { return findLatestVideo() || null; };
+      global.__i_hls_hasReal = function (video) {
+        var v = video || findLatestVideo();
+        if (!v) return false;
+        var k = readKey(v);
+        if (!k) return false;
+        var h = __i_hls_store[k];
+        if (!h) return false;
+        if (h.proxy) return false;
+        return typeof h.levels !== 'undefined';
+      };
       global.__i_hls_attach = function (video, srcUrl) {
         var url = (typeof srcUrl === 'string') ? srcUrl : String(srcUrl || '');
         return attach(video, url) || '';

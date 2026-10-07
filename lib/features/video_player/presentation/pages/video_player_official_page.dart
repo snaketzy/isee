@@ -17,6 +17,9 @@ external JSObject? iHlsFindLatestVideo();
 @JS('__i_hls_attach')
 external JSString iHlsAttach(JSObject videoEl, JSString srcUrl);
 
+@JS('__i_hls_hasReal')
+external JSBoolean iHlsHasRealInstance(JSObject? videoEl);
+
 @JS('__i_hls_destroy')
 external void iHlsDestroyByKey(JSString key);
 
@@ -101,6 +104,9 @@ class _VideoPlayerOfficialPageState
   }
 
   JSObject? _pickLatestVideoElementJs() => iHlsFindLatestVideo();
+
+  bool _hasRealHlsInstance(JSObject? jsVideoEl) =>
+      iHlsHasRealInstance(jsVideoEl).toDart;
 
   html.VideoElement? _pickLatestVideoElement() {
     final jsVid = _pickLatestVideoElementJs();
@@ -312,6 +318,16 @@ class _VideoPlayerOfficialPageState
             } catch (_) {}
           }
           await Future<void>.delayed(const Duration(milliseconds: 250));
+          final hasReal = _hasRealHlsInstance(jsVideo);
+          if (!hasReal) {
+            final retriedKey = _attachHlsToJs(jsVideo, url);
+            if (retriedKey.isNotEmpty &&
+                !_ownedHlsKeys.contains(retriedKey)) {
+              _ownedHlsKeys.add(retriedKey);
+              iHlsRegisterQualitySwitchCb(jsVideo, _qualitySwitchCb());
+              await Future<void>.delayed(const Duration(milliseconds: 250));
+            }
+          }
           if (_quality != VideoQuality.q1080p) {
             qualityLocked = _lockHlsLevelByVideoJs(jsVideo, _quality);
           } else {
@@ -398,6 +414,15 @@ class _VideoPlayerOfficialPageState
       final jsEl = _pickLatestVideoElementJs();
       bool locked = false;
       if (jsEl != null) {
+        final hasReal = _hasRealHlsInstance(jsEl);
+        if (!hasReal) {
+          final retryK = _attachHlsToJs(jsEl, newUrl);
+          if (retryK.isNotEmpty) {
+            _ownedHlsKeys.add(retryK);
+            iHlsRegisterQualitySwitchCb(jsEl, _qualitySwitchCb());
+            await Future<void>.delayed(const Duration(milliseconds: 400));
+          }
+        }
         if (q == VideoQuality.q1080p) {
           locked = _unlockHlsAutoByVideoJs(jsEl);
         } else {
