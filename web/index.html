@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="iSEE 流媒体视频订阅平台 (Netflix-style Streaming Platform)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="iSEE">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <title>iSEE - 流媒体视频平台</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background-color: #141414;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background-color: #141414;
+      z-index: 9999;
+      transition: opacity 0.5s ease;
+    }
+    #loading.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .logo {
+      color: #E50914;
+      font-size: 56px;
+      font-weight: 900;
+      letter-spacing: -2px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin-bottom: 24px;
+      text-shadow: 0 4px 30px rgba(229, 9, 20, 0.4);
+    }
+    .progress-wrap {
+      width: 240px;
+      height: 4px;
+      background-color: #2D2D2D;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #E50914, #FF6B6B);
+      animation: load 2.2s ease-in-out infinite;
+      border-radius: 2px;
+    }
+    @keyframes load {
+      0%   { width: 0%;   margin-left: 0; }
+      50%  { width: 60%;  margin-left: 0; }
+      100% { width: 0%;   margin-left: 100%; }
+    }
+    .sub {
+      color: #737373;
+      font-size: 13px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">
+    <div class="logo">iSEE</div>
+    <div class="progress-wrap">
+      <div class="progress-bar"></div>
+    </div>
+    <div class="sub">正在加载精彩内容…</div>
+  </div>
+  <script>
+    window.addEventListener('load', function(ev) {
+      var loading = document.querySelector('#loading');
+      window.setTimeout(function() {
+        if (loading) loading.classList.add('hidden');
+      }, 1500);
+      _flutter.loader.load({
+        serviceWorker: {
+          serviceWorkerVersion: serviceWorkerVersion,
+        },
+        onEntrypointLoaded: async function(engineInitializer) {
+          let engine = await engineInitializer.initializeEngine();
+          await engine.runApp();
+          if (loading) loading.classList.add('hidden');
+        }
+      });
+    });
+  </script>
+  <script src="flutter_bootstrap.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+{
+  "name": "iSEE - 流媒体视频平台",
+  "short_name": "iSEE",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#141414",
+  "theme_color": "#E50914",
+  "description": "iSEE 流媒体视频订阅平台，Netflix 风格的全海外架构 Web 端。",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "icons/Icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/Icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/Icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icons/Icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
