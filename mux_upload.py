@@ -18,6 +18,9 @@ VIDEO_DIR = "./video"
 MAX_WORKERS = 4
 MP4_SUFFIXES = (".mp4", ".mov", ".mkv")
 
+MAX_RESOLUTION_TIER = "2160p"
+VIDEO_QUALITY = "basic"
+
 # ============================================================
 # 🌐 提速开关（最重要的一行）
 # 有科学上网/代理的填写，没有就留 None，也能跑
@@ -90,6 +93,8 @@ class MuxClient:
             "new_asset_settings": {
                 "playback_policy": ["public"],
                 "passthrough": file_path.stem,
+                "video_quality": VIDEO_QUALITY,
+                "max_resolution_tier": MAX_RESOLUTION_TIER,
             },
             "cors_origin": "*",
         }
@@ -199,6 +204,8 @@ class MuxClient:
             "input": [{"url": video_url}],
             "playback_policy": ["public"],
             "passthrough": file_path.stem,
+            "video_quality": VIDEO_QUALITY,
+            "max_resolution_tier": MAX_RESOLUTION_TIER,
         }
         resp = requests.post(
             f"{self.base_url}/assets", json=payload, headers=self.headers

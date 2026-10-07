@@ -81,6 +81,9 @@ POLL_INTERVAL_SEC = 12
 READY_TIMEOUT_MIN = 240             # 单条资产最多等 4 小时（10GB 级够了）
 MAX_CONCURRENT = 3                  # 同一时刻最多并发提交的 Pull（Mux 免费额度别打满）
 
+MAX_RESOLUTION_TIER = "2160p"
+VIDEO_QUALITY = "basic"
+
 # 1d) rclone 定位
 RCLONE_BIN = shutil.which("rclone") or str(Path.home() / ".local" / "bin" / "rclone")
 RCLONE_CONF = str(PROJECT_DIR / "rclone.conf")
@@ -211,6 +214,8 @@ class MuxClient:
             "input": [{"url": r2_public_url}],
             "playback_policy": ["public"],
             "passthrough": filename,
+            "video_quality": VIDEO_QUALITY,
+            "max_resolution_tier": MAX_RESOLUTION_TIER,
         }
         r = requests.post(
             f"{self.base}/assets", json=payload, headers=self.headers, timeout=30

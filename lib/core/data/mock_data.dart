@@ -14,7 +14,7 @@ class MockData {
       'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
 
   static const String muxTest4Hls =
-      'https://stream.mux.com/dbwZ9W4aH4RGj02CUPNGa201025O01aBbmq6FG9unAow02Ak.m3u8';
+      'https://stream.mux.com/XceDtWCR2F01InyWrAcI00JeLtWCDPcOjN4g01im00Y0100FQ.m3u8';
 
   static Map<VideoQuality, String> get _videoUrls => {
         VideoQuality.q360p: placeholderVideo,
