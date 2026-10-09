@@ -592,6 +592,12 @@ class MockData {
         isAutoRenew: true,
         paymentMethod: 'Stripe •••• 4242',
       ),
+      registeredAt: DateTime.now().subtract(const Duration(days: 120)),
+      lastLoginAt: DateTime.now().subtract(const Duration(hours: 3)),
+      status: UserStatus.active,
+      totalWatchMinutes: 28471,
+      loginCount: 342,
+      region: '上海',
     );
   }
 
@@ -628,4 +634,13 @@ class MockData {
           v.cast.any((c) => c.toLowerCase().contains(q));
     }).toList();
   }
+
+  static void updateMembershipPlans(List<MembershipPlan> newPlans) {
+    membershipPlans
+      ..clear()
+      ..addAll(newPlans);
+  }
+
+  static List<VideoCategory> get categoriesList =>
+      List.unmodifiable(categories);
 }
