@@ -23,10 +23,11 @@ dependencies:
   # 官方 video_player：Chrome/Safari/Firefox 兼容性最好，Web 端通过 video_player_web_hls 内置 hls.js
   video_player: ^2.9.2
   video_player_web_hls: ^1.3.0
-  # 旧 media_kit 方案（保留，便于通过路由切换回退对比）
+  # 旧 media_kit 方案（保留，便于通过路由切换回退对比；移动端默认引擎）
   media_kit: ^1.1.10+1
   media_kit_video: ^1.2.4
   media_kit_libs_video: ^1.0.4
+  media_kit_libs_android_video: ^1.0.0
 
   # 网络与图片
   dio: ^5.7.0
@@ -38,6 +39,9 @@ dependencies:
   shared_preferences: ^2.3.3
   collection: ^1.18.0
   uuid: ^4.5.1
+
+  # 崩溃监控与日志上报（Sentry）
+  sentry_flutter: ^8.9.0
 
 dev_dependencies:
   flutter_test:

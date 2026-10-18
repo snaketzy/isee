@@ -569,7 +569,7 @@ packages:
     source: hosted
     version: "1.2.6"
   media_kit_libs_android_video:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: media_kit_libs_android_video
       sha256: "3f6274e5ab2de512c286a25c327288601ee445ed8ac319e0ef0b66148bd8f76c"
@@ -880,6 +880,22 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "2.1.2"
+  sentry:
+    dependency: transitive
+    description:
+      name: sentry
+      sha256: "599701ca0693a74da361bc780b0752e1abc98226cf5095f6b069648116c896bb"
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "8.14.2"
+  sentry_flutter:
+    dependency: "direct main"
+    description:
+      name: sentry_flutter
+      sha256: "5ba2cf40646a77d113b37a07bd69f61bb3ec8a73cbabe5537b05a7c89d2656f8"
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "8.14.2"
   shared_preferences:
     dependency: "direct main"
     description:
@@ -1153,10 +1169,10 @@ packages:
     dependency: transitive
     description:
       name: video_player_avfoundation
-      sha256: "2fc56e537324a19eb649fca991aa308ac961b5406292876fa657b062de461fd8"
+      sha256: "4f8a845173377ab250a50f9b9dfe4a43500cc76a7c49dd8410d02d8fc29dfd8b"
       url: "https://pub.flutter-io.cn"
     source: hosted
-    version: "2.12.0"
+    version: "2.12.1"
   video_player_platform_interface:
     dependency: transitive
     description:

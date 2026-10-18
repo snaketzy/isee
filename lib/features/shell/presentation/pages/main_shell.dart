@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/platform/platform.dart';
 
 class MainShell extends StatefulWidget {
   final Widget child;
@@ -39,16 +40,30 @@ class _MainShellState extends State<MainShell> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = Breakpoints.isMobile(context);
     return Scaffold(
       extendBodyBehindAppBar: true,
-      appBar: _buildAppBar(context),
+      appBar: PreferredSize(
+        preferredSize: Size.fromHeight(isMobile ? 56 : 64),
+        child: _AnimatedAppBar(
+          isHome: GoRouterState.of(context).uri.path == '/home',
+          onLogoTap: () => context.go('/home'),
+          onSearchTap: () => context.go('/search'),
+          onProfileTap: () => context.go('/profile'),
+          onNotifTap: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('暂无新通知')),
+            );
+          },
+        ),
+      ),
       body: widget.child,
       bottomNavigationBar: NavigationBar(
         backgroundColor: AppTheme.surfaceDark.withOpacity(0.95),
         indicatorColor: AppTheme.primaryRed.withOpacity(0.2),
         selectedIndex: _currentIndex,
         onDestinationSelected: _onTap,
-        height: 64,
+        height: isMobile ? 60 : 64,
         destinations: List.generate(4, (i) {
           return NavigationDestination(
             icon: Icon(_icons[i], color: AppTheme.textSecondary),
@@ -56,24 +71,6 @@ class _MainShellState extends State<MainShell> {
             label: _labels[i],
           );
         }),
-      ),
-    );
-  }
-
-  PreferredSizeWidget _buildAppBar(BuildContext context) {
-    final isHome = GoRouterState.of(context).uri.path == '/home';
-    return PreferredSize(
-      preferredSize: const Size.fromHeight(64),
-      child: _AnimatedAppBar(
-        isHome: isHome,
-        onLogoTap: () => context.go('/home'),
-        onSearchTap: () => context.go('/search'),
-        onProfileTap: () => context.go('/profile'),
-        onNotifTap: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('暂无新通知')),
-          );
-        },
       ),
     );
   }
@@ -113,6 +110,7 @@ class _AnimatedAppBarState extends State<_AnimatedAppBar> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = Breakpoints.isMobile(context);
     if (!widget.isHome) {
       _isScrolled = true;
     }
@@ -128,41 +126,44 @@ class _AnimatedAppBarState extends State<_AnimatedAppBar> {
         child: SafeArea(
           bottom: false,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+            padding: EdgeInsets.symmetric(
+                horizontal: isMobile ? 16 : 24, vertical: isMobile ? 6 : 8),
             child: Row(
               children: [
                 GestureDetector(
                   onTap: widget.onLogoTap,
-                  child: const Text(
+                  child: Text(
                     'iSee',
                     style: TextStyle(
                       color: AppTheme.primaryRed,
-                      fontSize: 28,
+                      fontSize: isMobile ? 22 : 28,
                       fontWeight: FontWeight.w900,
                       letterSpacing: -1.2,
                     ),
                   ),
                 ),
-                const SizedBox(width: 32),
-                if (widget.isHome) _buildNavLinks(),
+                if (!isMobile) const SizedBox(width: 32),
+                if (!isMobile && widget.isHome) _buildNavLinks(),
                 const Spacer(),
                 IconButton(
                   onPressed: widget.onSearchTap,
                   icon: const Icon(Icons.search_rounded),
                   tooltip: '搜索',
+                  iconSize: isMobile ? 22 : 24,
                 ),
-                const SizedBox(width: 4),
-                IconButton(
-                  onPressed: widget.onNotifTap,
-                  icon: const Icon(Icons.notifications_none_rounded),
-                  tooltip: '通知',
-                ),
-                const SizedBox(width: 8),
+                if (!isMobile) const SizedBox(width: 4),
+                if (!isMobile)
+                  IconButton(
+                    onPressed: widget.onNotifTap,
+                    icon: const Icon(Icons.notifications_none_rounded),
+                    tooltip: '通知',
+                  ),
+                SizedBox(width: isMobile ? 4 : 8),
                 GestureDetector(
                   onTap: widget.onProfileTap,
                   child: Container(
-                    width: 34,
-                    height: 34,
+                    width: isMobile ? 30 : 34,
+                    height: isMobile ? 30 : 34,
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
                         colors: [AppTheme.primaryRed, Color(0xFFFF6B6B)],
@@ -171,10 +172,10 @@ class _AnimatedAppBarState extends State<_AnimatedAppBar> {
                       ),
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.person_rounded,
                       color: Colors.white,
-                      size: 20,
+                      size: isMobile ? 18 : 20,
                     ),
                   ),
                 ),

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../core/theme/app_theme.dart';
 import '../core/router/app_router.dart';
+import '../core/utils/sentry_setup.dart';
 
 class IseeApp extends ConsumerWidget {
   const IseeApp({super.key});
@@ -19,6 +20,20 @@ class IseeApp extends ConsumerWidget {
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
       routerConfig: router,
+      builder: kSentryEnabled
+          ? (context, child) {
+              Widget root = child ?? const SizedBox.shrink();
+              try {
+                final navigator = Navigator.of(context);
+                // ignore: avoid_print
+                assert(() {
+                  debugPrint('Sentry: navigator context=${navigator.context.widget.runtimeType}');
+                  return true;
+                }());
+              } catch (_) {}
+              return root;
+            }
+          : null,
     );
   }
 }

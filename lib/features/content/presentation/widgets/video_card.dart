@@ -12,6 +12,7 @@ class VideoCard extends ConsumerStatefulWidget {
   final bool showRank;
   final int? rank;
   final bool isLarge;
+  final bool compact;
 
   const VideoCard({
     super.key,
@@ -19,6 +20,7 @@ class VideoCard extends ConsumerStatefulWidget {
     this.showRank = false,
     this.rank,
     this.isLarge = false,
+    this.compact = false,
   });
 
   @override
@@ -30,56 +32,69 @@ class _VideoCardState extends ConsumerState<VideoCard> {
 
   @override
   Widget build(BuildContext context) {
-    final size = widget.isLarge
-        ? const Size(260, 390)
-        : const Size(200, 300);
+    final c = widget.compact;
+    final Size size;
+    if (c) {
+      size = widget.isLarge ? const Size(170, 255) : const Size(130, 195);
+    } else {
+      size = widget.isLarge
+          ? const Size(260, 390)
+          : const Size(200, 300);
+    }
+    final rankFont = c ? 58.0 : 90.0;
+    final rankBadgeSize = c ? const Size(38, 88) : const Size(60, 140);
 
     final card = MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      cursor: c ? MouseCursor.defer : SystemMouseCursors.click,
+      onEnter: c ? null : (_) => setState(() => _hovered = true),
+      onExit: c ? null : (_) => setState(() => _hovered = false),
       child: GestureDetector(
         onTap: () => context.push('/detail/${widget.video.id}'),
         child: Stack(
           clipBehavior: Clip.none,
           alignment: Alignment.bottomLeft,
           children: [
-            _buildPoster(size),
-            if (widget.showRank) _buildRankBadge(),
-            Positioned(
-              left: -12,
-              right: -12,
-              bottom: -80,
-              child: AnimatedOpacity(
-                duration: const Duration(milliseconds: 200),
-                opacity: _hovered ? 1.0 : 0.0,
-                child: _buildInfoCard(),
+            _buildPoster(size, c),
+            if (widget.showRank) _buildRankBadge(rankFont, rankBadgeSize),
+            if (!c)
+              Positioned(
+                left: -12,
+                right: -12,
+                bottom: -80,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 200),
+                  opacity: _hovered ? 1.0 : 0.0,
+                  child: _buildInfoCard(),
+                ),
               ),
-            ),
+            if (c) _buildPosterBottomInfo(c, size),
           ],
         ),
       ),
     );
 
     if (widget.showRank) {
-      return SizedBox(width: size.width + 40, child: card);
+      return SizedBox(width: size.width + (c ? 22 : 40), child: card);
     }
     return SizedBox(width: size.width, child: card);
   }
 
-  Widget _buildPoster(Size size) {
+  Widget _buildPoster(Size size, bool c) {
+    final hoverScale = c
+        ? Matrix4.identity()
+        : (_hovered
+            ? (Matrix4.identity()
+              ..scale(1.08)
+              ..translate(0.0, -20.0))
+            : Matrix4.identity());
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeOutCubic,
-      transform: _hovered
-          ? (Matrix4.identity()
-            ..scale(1.08)
-            ..translate(0.0, -20.0))
-          : Matrix4.identity(),
+      transform: hoverScale,
       width: size.width,
       height: size.height,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(_hovered ? 6 : 4),
+        borderRadius: BorderRadius.circular(c ? 6 : (_hovered ? 6 : 4)),
         child: Stack(
           children: [
             Positioned.fill(
@@ -98,31 +113,32 @@ class _VideoCardState extends ConsumerState<VideoCard> {
                 ),
               ),
             ),
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: AnimatedOpacity(
-                opacity: _hovered ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 200),
-                child: Container(
-                  height: 80,
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.black87, Colors.transparent],
+            if (!c)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: AnimatedOpacity(
+                  opacity: _hovered ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 200),
+                  child: Container(
+                    height: 80,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.black87, Colors.transparent],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
             Positioned(
               bottom: 0,
               left: 0,
               right: 0,
               child: Container(
-                height: 100,
+                height: c ? 50 : 100,
                 decoration: const BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.bottomCenter,
@@ -138,7 +154,58 @@ class _VideoCardState extends ConsumerState<VideoCard> {
     );
   }
 
-  Widget _buildRankBadge() {
+  Widget _buildPosterBottomInfo(bool c, Size size) {
+    return Positioned(
+      left: 6,
+      right: 6,
+      bottom: 6,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.video.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: c ? 11 : 12,
+              fontWeight: FontWeight.w800,
+              shadows: const [Shadow(blurRadius: 4, color: Colors.black54)],
+            ),
+          ),
+          const SizedBox(height: 2),
+          Row(
+            children: [
+              Text(
+                '${widget.video.rating.toStringAsFixed(1)} 分',
+                style: TextStyle(
+                  color: Colors.green,
+                  fontSize: c ? 9 : 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const Spacer(),
+              if (widget.video.isTopTen)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  color: AppTheme.primaryRed,
+                  child: Text(
+                    'TOP10',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: c ? 8 : 9,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRankBadge(double rankFont, Size rankBadgeSize) {
     final rank = widget.rank ?? 1;
     return Positioned(
       left: 0,
@@ -149,37 +216,37 @@ class _VideoCardState extends ConsumerState<VideoCard> {
           clipBehavior: Clip.none,
           children: [
             CustomPaint(
-              size: const Size(60, 140),
+              size: rankBadgeSize,
               painter: _RankBadgePainter(),
             ),
             Positioned(
-              left: 6,
+              left: 4,
               child: Text(
                 '$rank',
-                style: const TextStyle(
-                  fontSize: 90,
+                style: TextStyle(
+                  fontSize: rankFont,
                   fontWeight: FontWeight.w900,
                   color: Colors.black,
                   fontFamily: 'Arial',
-                  letterSpacing: -4,
+                  letterSpacing: -(rankFont / 22),
                   height: 1.0,
                 ),
                 strutStyle: const StrutStyle(height: 1.0),
               ),
             ),
             Positioned(
-              left: 5,
+              left: 3,
               child: Text(
                 '$rank',
                 style: TextStyle(
-                  fontSize: 90,
+                  fontSize: rankFont,
                   fontWeight: FontWeight.w900,
                   foreground: Paint()
                     ..style = PaintingStyle.stroke
-                    ..strokeWidth = 3
+                    ..strokeWidth = rankFont > 60 ? 3 : 2
                     ..color = AppTheme.textPrimary,
                   fontFamily: 'Arial',
-                  letterSpacing: -4,
+                  letterSpacing: -(rankFont / 22),
                   height: 1.0,
                 ),
                 strutStyle: const StrutStyle(height: 1.0),

@@ -1,7 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter/material.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 
+import '../../core/utils/sentry_setup.dart';
 import '../../features/home/presentation/pages/home_page.dart';
 import '../../features/search/presentation/pages/search_page.dart';
 import '../../features/mylist/presentation/pages/my_list_page.dart';
@@ -11,7 +13,6 @@ import '../../features/video_player/presentation/pages/video_player_page.dart';
 import '../../features/video_player/presentation/pages/video_player_official_page.dart';
 import '../../features/subscription/presentation/pages/subscription_page.dart';
 import '../../features/shell/presentation/pages/main_shell.dart';
-
 import '../../features/admin/data/providers/admin_auth_provider.dart';
 import '../../features/admin/presentation/widgets/admin_shell.dart';
 import '../../features/admin/presentation/widgets/admin_app_bar.dart';
@@ -29,6 +30,9 @@ import '../../features/admin/presentation/pages/membership_plans_page.dart';
 import '../../features/admin/presentation/pages/analytics_page.dart';
 import '../../features/admin/presentation/pages/admin_staff_page.dart';
 import '../../features/admin/presentation/pages/system_settings_page.dart';
+
+const bool kIncludeAdmin =
+    bool.fromEnvironment('INCLUDE_ADMIN', defaultValue: true);
 
 class _AdminShellPage extends StatelessWidget {
   final Widget child;
@@ -48,27 +52,7 @@ class _AdminShellPage extends StatelessWidget {
   }
 }
 
-final appRouterProvider = Provider<GoRouter>((ref) {
-  final authListenable = _AdminAuthListenable(ref);
-  return GoRouter(
-    initialLocation: '/home',
-    debugLogDiagnostics: true,
-    refreshListenable: authListenable,
-    redirect: (context, state) {
-      final path = state.uri.path;
-      final isAdminRoute = path.startsWith('/admin');
-      final authState = ref.read(adminAuthProvider);
-      final loggedIn = authState.isAuthenticated;
-      if (isAdminRoute && path != '/admin/login' && !loggedIn) {
-        final target = Uri.encodeQueryComponent(state.uri.toString());
-        return '/admin/login?redirect=$target';
-      }
-      if (path == '/admin/login' && loggedIn) {
-        return '/admin/dashboard';
-      }
-      return null;
-    },
-    routes: [
+List<RouteBase> _buildFrontRoutes() => [
       ShellRoute(
         builder: (context, state, child) => MainShell(child: child),
         routes: [
@@ -138,6 +122,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: 'subscription',
         builder: (context, state) => const SubscriptionPage(),
       ),
+    ];
+
+List<RouteBase> _buildAdminRoutes() => [
       GoRoute(
         path: '/admin/login',
         name: 'admin-login',
@@ -263,6 +250,37 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           ),
         ],
       ),
+    ];
+
+final appRouterProvider = Provider<GoRouter>((ref) {
+  final authListenable =
+      kIncludeAdmin ? _AdminAuthListenable(ref) : _NoOpListenable();
+  final observers = <NavigatorObserver>[
+    if (kSentryEnabled) SentryNavigatorObserver(),
+  ];
+  return GoRouter(
+    initialLocation: '/home',
+    debugLogDiagnostics: true,
+    refreshListenable: authListenable,
+    observers: observers,
+    redirect: (context, state) {
+      if (!kIncludeAdmin) return null;
+      final path = state.uri.path;
+      final isAdminRoute = path.startsWith('/admin');
+      final authState = ref.read(adminAuthProvider);
+      final loggedIn = authState.isAuthenticated;
+      if (isAdminRoute && path != '/admin/login' && !loggedIn) {
+        final target = Uri.encodeQueryComponent(state.uri.toString());
+        return '/admin/login?redirect=$target';
+      }
+      if (path == '/admin/login' && loggedIn) {
+        return '/admin/dashboard';
+      }
+      return null;
+    },
+    routes: [
+      ..._buildFrontRoutes(),
+      if (kIncludeAdmin) ..._buildAdminRoutes(),
     ],
   );
 });
@@ -272,3 +290,5 @@ class _AdminAuthListenable extends ChangeNotifier {
     ref.listen(adminAuthProvider, (_, __) => notifyListeners());
   }
 }
+
+class _NoOpListenable extends ChangeNotifier {}

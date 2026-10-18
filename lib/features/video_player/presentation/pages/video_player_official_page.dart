@@ -2,41 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:video_player/video_player.dart' as vp;
 import 'dart:async';
-import 'dart:html' as html;
-import 'dart:js_interop';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/models/video_quality.dart';
+import '../../../../core/platform/platform.dart';
+import '../../../../core/platform/video_player/video_player_factory.dart';
 import '../../../content/data/providers/content_providers.dart';
 import '../../../content/domain/entities/video_content.dart';
 
-@JS('__i_hls_findLatestVideo')
-external JSObject? iHlsFindLatestVideo();
-
-@JS('__i_hls_attach')
-external JSString iHlsAttach(JSObject videoEl, JSString srcUrl);
-
-@JS('__i_hls_hasReal')
-external JSBoolean iHlsHasRealInstance(JSObject? videoEl);
-
-@JS('__i_hls_destroy')
-external void iHlsDestroyByKey(JSString key);
-
-@JS('__i_hls_destroyAll')
-external void iHlsDestroyAll();
-
-@JS('__i_hls_lockLevel')
-external JSBoolean iHlsLockLevel(JSObject videoEl, JSNumber targetHeight);
-
-@JS('__i_hls_unlockAuto')
-external JSBoolean iHlsUnlockAuto(JSObject videoEl);
-
-@JS('__i_hls_currentHeight')
-external JSNumber iHlsCurrentHeight(JSObject videoEl);
-
-@JS('__i_hls_registerQualitySwitchCb')
-external void iHlsRegisterQualitySwitchCb(JSObject videoEl, JSFunction cb);
 class VideoPlayerOfficialPage extends ConsumerStatefulWidget {
   final String videoId;
   final int episodeIndex;
@@ -54,8 +27,11 @@ class VideoPlayerOfficialPage extends ConsumerStatefulWidget {
 
 class _VideoPlayerOfficialPageState
     extends ConsumerState<VideoPlayerOfficialPage> {
-  vp.VideoPlayerController? _controller;
-  bool _initialized = false;
+  late final VideoPlayerStrategy _strategy;
+  StreamSubscription<bool>? _playingSub;
+  StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<Duration>? _durationSub;
+
   bool _controlsVisible = true;
   Timer? _controlsTimer;
   bool _isPlaying = false;
@@ -69,25 +45,34 @@ class _VideoPlayerOfficialPageState
   bool _qualityMenuOpen = false;
   bool _speedMenuOpen = false;
   bool _showNextPrev = true;
-  String? _currentUrl;
-  Map<VideoQuality, String>? _currentQualityMap;
   bool _isDraggingSlider = false;
-  final Set<String> _ownedHlsKeys = {};
 
   @override
   void initState() {
     super.initState();
-    WidgetsFlutterBinding.ensureInitialized();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initPlayer();
+    _strategy = VideoPlayerStrategyFactory.create();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initPlayer());
+    _playingSub = _strategy.playingStream.listen((v) {
+      if (!mounted) return;
+      setState(() => _isPlaying = v);
+    });
+    _positionSub = _strategy.positionStream.listen((v) {
+      if (!mounted || _isDraggingSlider) return;
+      setState(() => _position = v);
+    });
+    _durationSub = _strategy.durationStream.listen((v) {
+      if (!mounted) return;
+      setState(() => _total = v);
     });
   }
 
   @override
   void dispose() {
     _controlsTimer?.cancel();
-    _destroyOwnedHls();
-    _controller?.dispose();
+    _playingSub?.cancel();
+    _positionSub?.cancel();
+    _durationSub?.cancel();
+    _strategy.dispose();
     super.dispose();
   }
 
@@ -95,134 +80,12 @@ class _VideoPlayerOfficialPageState
       url != null && url.toLowerCase().endsWith('.m3u8');
 
   String _pickUrlForQuality(VideoQuality q) {
-    final m = _currentQualityMap;
+    final m = _strategy.qualityMap;
     if (m != null && m.containsKey(q) && m[q] != null && m[q]!.isNotEmpty) {
       return m[q]!;
     }
-    if (_currentUrl != null) return _currentUrl!;
+    if (_strategy.currentUrl != null) return _strategy.currentUrl!;
     return 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-  }
-
-  JSObject? _pickLatestVideoElementJs() => iHlsFindLatestVideo();
-
-  bool _hasRealHlsInstance(JSObject? jsVideoEl) =>
-      iHlsHasRealInstance(jsVideoEl).toDart;
-
-  html.VideoElement? _pickLatestVideoElement() {
-    final jsVid = _pickLatestVideoElementJs();
-    if (jsVid == null) return null;
-    final all = html.querySelectorAll('video');
-    return all.isEmpty ? null : all.last as html.VideoElement;
-  }
-
-  String _attachHlsToJs(JSObject jsVideoEl, String srcUrl) {
-    final s = iHlsAttach(jsVideoEl, srcUrl.toJS);
-    return s.toDart;
-  }
-
-  bool _lockHlsLevelByVideoJs(JSObject jsVideoEl, VideoQuality target) {
-    final h = _qualityHeight(target).toDouble();
-    final ok = iHlsLockLevel(jsVideoEl, h.toJS);
-    return ok.toDart;
-  }
-
-  bool _unlockHlsAutoByVideoJs(JSObject jsVideoEl) {
-    final ok = iHlsUnlockAuto(jsVideoEl);
-    return ok.toDart;
-  }
-
-  int? _currentHlsHeightByVideoJs(JSObject jsVideoEl) {
-    final n = iHlsCurrentHeight(jsVideoEl);
-    final v = n.toDartDouble;
-    if (!v.isFinite || v < 100) return null;
-    return v.toInt();
-  }
-
-  JSFunction _qualitySwitchCb() {
-    void cb(JSNumber h) {
-      if (!mounted) return;
-      final v = h.toDartInt;
-      if (v >= 180 && v <= 16384) {
-        final q = _qualityFromHeight(v);
-        if (q != _quality) setState(() => _quality = q);
-      }
-    }
-    return cb.toJS as JSFunction;
-  }
-
-  void _destroyOwnedHls() {
-    for (final k in List<String>.unmodifiable(_ownedHlsKeys)) {
-      try {
-        iHlsDestroyByKey(k.toJS);
-      } catch (_) {}
-    }
-    _ownedHlsKeys.clear();
-  }
-
-  int _qualityHeight(VideoQuality q) {
-    switch (q) {
-      case VideoQuality.q360p:
-        return 360;
-      case VideoQuality.q480p:
-        return 480;
-      case VideoQuality.q720p:
-        return 720;
-      case VideoQuality.q1080p:
-        return 1080;
-      case VideoQuality.q4k:
-        return 2160;
-    }
-  }
-
-  VideoQuality _qualityFromHeight(int h) {
-    if (h >= 1080) return VideoQuality.q1080p;
-    if (h >= 720) return VideoQuality.q720p;
-    if (h >= 480) return VideoQuality.q480p;
-    return VideoQuality.q360p;
-  }
-
-  Future<void> _postInitializeHlsIfNeeded(String url) async {
-    if (!_isHlsUrl(url)) return;
-    for (int i = 0; i < 25; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 80));
-      final jsEl = _pickLatestVideoElementJs();
-      if (jsEl == null) continue;
-      final existing = _attachHlsToJs(jsEl, '');
-      if (existing.isNotEmpty) {
-        if (!_ownedHlsKeys.contains(existing)) {
-          _ownedHlsKeys.add(existing);
-          try {
-            iHlsRegisterQualitySwitchCb(jsEl, _qualitySwitchCb());
-          } catch (_) {}
-        }
-        return;
-      }
-      final htmlEl = _pickLatestVideoElement();
-      bool matches = false;
-      if (htmlEl != null) {
-        final s = htmlEl.src;
-        final cs = htmlEl.currentSrc;
-        final hasSrc = s.isNotEmpty || cs.isNotEmpty;
-        final vw = htmlEl.videoWidth;
-        final vh = htmlEl.videoHeight;
-        final hasDim = vw > 0 && vh > 0;
-        if (hasSrc && hasDim) matches = true;
-        if (s == url || s.startsWith(url) || s.contains('stream.mux.com/') || s.contains('.m3u8')) matches = true;
-        if (cs == url || cs.startsWith(url) || cs.contains('stream.mux.com/') || cs.contains('.m3u8')) matches = true;
-        if (s.startsWith('blob:') || cs.startsWith('blob:')) {
-          if (hasDim) matches = true;
-        }
-      }
-      if (!matches) continue;
-      final k = _attachHlsToJs(jsEl, url);
-      if (k.isNotEmpty) {
-        _ownedHlsKeys.add(k);
-        try {
-          iHlsRegisterQualitySwitchCb(jsEl, _qualitySwitchCb());
-        } catch (_) {}
-      }
-      return;
-    }
   }
 
   void _initPlayer() {
@@ -252,7 +115,9 @@ class _VideoPlayerOfficialPageState
         if (video.mainVideoUrls != null && video.mainVideoUrls!.isNotEmpty) {
           qmap = Map<VideoQuality, String>.unmodifiable(video.mainVideoUrls!);
           final picked = video.mainVideoUrls![_quality];
-          url = picked ?? video.mainVideoUrl ?? video.mainVideoUrls!.values.first;
+          url = picked ??
+              video.mainVideoUrl ??
+              video.mainVideoUrls!.values.first;
         } else {
           url = video.mainVideoUrl;
         }
@@ -260,158 +125,17 @@ class _VideoPlayerOfficialPageState
     }
     url ??=
         'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-    _currentQualityMap = qmap;
-    _load(url);
-  }
-
-  Future<void> _load(
-    String url, {
-    Duration? resumeFrom,
-    bool autoPlay = true,
-    double? playbackSpeed,
-  }) async {
-    setState(() {
-      _initialized = false;
-      _isPlaying = false;
-      _currentUrl = url;
-      if (resumeFrom == null) {
-        _position = Duration.zero;
-      }
-      _total = Duration.zero;
-    });
-    try {
-      final old = _controller;
-      final speed = playbackSpeed ?? _playbackSpeed;
-      // Destroy previous hls and dispose old controller BEFORE new initialize, to avoid double attach on stale videos
-      if (old != null) {
-        try {
-          old.removeListener(_onControllerTick);
-        } catch (_) {}
-      }
-      _destroyOwnedHls();
-      if (old != null) {
-        try {
-          await old.dispose();
-        } catch (_) {}
-        // Small async gap so the browser GC has a chance to drop the dead video element
-        await Future<void>.delayed(const Duration(milliseconds: 60));
-      }
-      final newCtl = vp.VideoPlayerController.networkUrl(
-        Uri.parse(url),
-        httpHeaders: const {},
-        videoPlayerOptions: vp.VideoPlayerOptions(mixWithOthers: true),
-      );
-      _controller = newCtl;
-      newCtl.addListener(_onControllerTick);
-      await newCtl.initialize();
-      try {
-        await newCtl.setVolume(_muted ? 0.0 : _volume);
-      } catch (_) {}
-      try {
-        if ((speed - 1.0).abs() > 0.001) {
-          await newCtl.setPlaybackSpeed(speed);
-        }
-      } catch (_) {}
-      bool qualityLocked = false;
-      JSObject? jsVideo;
-      if (_isHlsUrl(url)) {
-        jsVideo = _pickLatestVideoElementJs();
-        if (jsVideo != null) {
-          final existing = _attachHlsToJs(jsVideo, '');
-          if (existing.isEmpty) {
-            final k = _attachHlsToJs(jsVideo, url);
-            if (k.isNotEmpty) _ownedHlsKeys.add(k);
-            try {
-              iHlsRegisterQualitySwitchCb(jsVideo, _qualitySwitchCb());
-            } catch (_) {}
-          } else if (!_ownedHlsKeys.contains(existing)) {
-            _ownedHlsKeys.add(existing);
-            try {
-              iHlsRegisterQualitySwitchCb(jsVideo, _qualitySwitchCb());
-            } catch (_) {}
-          }
-          await Future<void>.delayed(const Duration(milliseconds: 250));
-          final hasReal = _hasRealHlsInstance(jsVideo);
-          if (!hasReal) {
-            final retriedKey = _attachHlsToJs(jsVideo, url);
-            if (retriedKey.isNotEmpty &&
-                !_ownedHlsKeys.contains(retriedKey)) {
-              _ownedHlsKeys.add(retriedKey);
-              iHlsRegisterQualitySwitchCb(jsVideo, _qualitySwitchCb());
-              await Future<void>.delayed(const Duration(milliseconds: 250));
-            }
-          }
-          if (_quality != VideoQuality.q1080p) {
-            qualityLocked = _lockHlsLevelByVideoJs(jsVideo, _quality);
-          } else {
-            _unlockHlsAutoByVideoJs(jsVideo);
-          }
-        }
-      }
-      setState(() {
-        _initialized = true;
-        _total = newCtl.value.duration;
-        _playbackSpeed = speed;
-      });
-      if (resumeFrom != null && resumeFrom > Duration.zero) {
-        final d = _clampDuration(resumeFrom, Duration.zero,
-            _total > Duration.zero ? _total : resumeFrom);
-        try {
-          await newCtl.seekTo(d);
-          if (mounted) setState(() => _position = d);
-        } catch (_) {}
-      }
-      if (autoPlay) {
-        try {
-          await newCtl.play();
-        } catch (e) {
-          debugPrint('Autoplay blocked (user gesture required): $e');
-          if (mounted) setState(() => _isPlaying = false);
-        }
-      }
-      if (_isHlsUrl(url)) {
-        _postInitializeHlsIfNeeded(url).ignore();
-      }
-      if (!qualityLocked &&
-          _isHlsUrl(url) &&
-          _quality != VideoQuality.q1080p) {
-        await Future<void>.delayed(const Duration(milliseconds: 800));
-        final js2 = _pickLatestVideoElementJs();
-        if (js2 != null) _lockHlsLevelByVideoJs(js2, _quality);
-      }
-    } catch (e, s) {
-      debugPrint('VideoPlayerOfficial load error: $e\n$s');
-      if (!mounted) return;
-      setState(() => _initialized = true);
-    }
-  }
-
-  void _onControllerTick() {
-    if (!mounted || _controller == null) return;
-    final v = _controller!.value;
-    bool needBuild = false;
-    if (v.isPlaying != _isPlaying) {
-      _isPlaying = v.isPlaying;
-      needBuild = true;
-    }
-    if (_position != v.position && !_isDraggingSlider) {
-      _position = v.position;
-      needBuild = true;
-    }
-    if (_total != v.duration) {
-      _total = v.duration;
-      needBuild = true;
-    }
-    if ((_volume - v.volume).abs() > 0.001 && !_muted) {
-      _volume = v.volume;
-      needBuild = true;
-    }
-    if (needBuild) setState(() {});
+    _strategy.initialize(
+      url,
+      qualityMap: qmap,
+      initialQuality: _quality,
+      autoPlay: true,
+    ).ignore();
   }
 
   Future<void> _switchQuality(VideoQuality q) async {
     _resetControlsTimer();
-    final oldUrl = _currentUrl;
+    final oldUrl = _strategy.currentUrl;
     final resumePos = _position;
     final oldQuality = _quality;
     setState(() {
@@ -424,53 +148,29 @@ class _VideoPlayerOfficialPageState
         _isHlsUrl(oldUrl) &&
         _isHlsUrl(newUrl);
     if (sameUrl) {
-      final jsEl = _pickLatestVideoElementJs();
-      bool locked = false;
-      if (jsEl != null) {
-        final hasReal = _hasRealHlsInstance(jsEl);
-        if (!hasReal) {
-          final retryK = _attachHlsToJs(jsEl, newUrl);
-          if (retryK.isNotEmpty) {
-            _ownedHlsKeys.add(retryK);
-            iHlsRegisterQualitySwitchCb(jsEl, _qualitySwitchCb());
-            await Future<void>.delayed(const Duration(milliseconds: 400));
-          }
-        }
-        if (q == VideoQuality.q1080p) {
-          locked = _unlockHlsAutoByVideoJs(jsEl);
-        } else {
-          locked = _lockHlsLevelByVideoJs(jsEl, q);
-        }
-      }
-      if (locked || q == VideoQuality.q1080p) {
-        if (q == VideoQuality.q1080p) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('画质已切换到 1080p（自适应上限），由播放器按带宽选择'),
-              backgroundColor: AppTheme.surfaceLight,
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('画质已强制锁定到 ${q.label}，下一个切片开始生效'),
-              backgroundColor: AppTheme.surfaceLight,
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        }
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '当前视频使用自适应流（HLS ABR），实际码率由播放器根据带宽自动选择，当前偏好：${q.label}',
+      try {
+        await _strategy.switchQuality(q);
+        final msg = q == VideoQuality.q1080p
+            ? '画质已切换到 1080p（自适应上限），由播放器按带宽选择'
+            : '画质已强制锁定到 ${q.label}，下一个切片开始生效';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            backgroundColor: AppTheme.surfaceLight,
+            duration: const Duration(seconds: 2),
           ),
-          backgroundColor: AppTheme.surfaceLight,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+        );
+      } catch (_) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '当前视频使用自适应流（HLS ABR），实际码率由播放器根据带宽自动选择，当前偏好：${q.label}',
+            ),
+            backgroundColor: AppTheme.surfaceLight,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
@@ -481,7 +181,14 @@ class _VideoPlayerOfficialPageState
       ),
     );
     try {
-      await _load(newUrl, resumeFrom: resumePos, playbackSpeed: _playbackSpeed);
+      await _strategy.initialize(
+        newUrl,
+        qualityMap: _strategy.qualityMap,
+        initialQuality: q,
+        resumeFrom: resumePos,
+        autoPlay: _isPlaying,
+        playbackSpeed: _playbackSpeed,
+      );
     } catch (e) {
       debugPrint('Switch quality error: $e');
       if (!mounted) return;
@@ -495,19 +202,9 @@ class _VideoPlayerOfficialPageState
     }
   }
 
-  void _togglePlay() async {
+  void _togglePlay() {
     _resetControlsTimer();
-    final c = _controller;
-    if (c == null || !c.value.isInitialized) return;
-    try {
-      if (c.value.isPlaying) {
-        await c.pause();
-      } else {
-        await c.play();
-      }
-    } catch (e) {
-      debugPrint('togglePlay error: $e');
-    }
+    _strategy.togglePlay();
   }
 
   Duration _clampDuration(Duration d, Duration min, Duration max) {
@@ -516,66 +213,42 @@ class _VideoPlayerOfficialPageState
     return d;
   }
 
-  void _seekRelative(Duration d) async {
+  void _seekRelative(Duration d) {
     _resetControlsTimer();
-    final c = _controller;
-    if (c == null || !c.value.isInitialized) return;
     final t = _clampDuration(_position + d, Duration.zero, _total);
-    try {
-      await c.seekTo(t);
-      if (mounted) setState(() => _position = t);
-    } catch (_) {}
+    _strategy.seekTo(t);
   }
 
-  void _seekTo(Duration d) async {
+  void _seekTo(Duration d) {
     _resetControlsTimer();
-    final c = _controller;
-    if (c == null || !c.value.isInitialized) return;
-    try {
-      await c.seekTo(d);
-      if (mounted) setState(() => _position = d);
-    } catch (_) {}
+    _strategy.seekTo(d);
   }
 
-  void _toggleMute() async {
+  void _toggleMute() {
     _resetControlsTimer();
-    final c = _controller;
-    final toMuted = !_muted;
-    setState(() => _muted = toMuted);
-    if (c == null) return;
-    try {
-      if (toMuted) {
-        await c.setVolume(0.0);
-      } else {
-        final v = _volume <= 0.01 ? 0.8 : _volume;
-        await c.setVolume(v);
-      }
-    } catch (_) {}
-  }
-
-  void _setVolume(double v) async {
-    final c = _controller;
-    setState(() {
-      _volume = v;
-      _muted = v <= 0.001;
+    _strategy.toggleMute().then((_) {
+      if (mounted) setState(() => _muted = !_muted);
     });
-    if (c == null) return;
-    try {
-      await c.setVolume(v);
-    } catch (_) {}
   }
 
-  void _setSpeed(double s) async {
+  void _setVolume(double v) {
+    _strategy.setVolume(v).then((_) {
+      if (mounted) {
+        setState(() {
+          _volume = v;
+          _muted = v <= 0.001;
+        });
+      }
+    });
+  }
+
+  void _setSpeed(double s) {
     _resetControlsTimer();
-    final c = _controller;
     setState(() {
       _playbackSpeed = s;
       _speedMenuOpen = false;
     });
-    if (c == null) return;
-    try {
-      await c.setPlaybackSpeed(s);
-    } catch (_) {}
+    _strategy.setPlaybackSpeed(s);
   }
 
   void _showControls() {
@@ -618,19 +291,10 @@ class _VideoPlayerOfficialPageState
 
   void _toggleFullscreen() {
     _resetControlsTimer();
-    if (_isFullscreen) {
-      try {
-        html.document.exitFullscreen();
-      } catch (_) {}
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-      setState(() => _isFullscreen = false);
-    } else {
-      try {
-        html.document.documentElement?.requestFullscreen();
-      } catch (_) {}
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-      setState(() => _isFullscreen = true);
-    }
+    final fm = MobileFullscreenManager();
+    fm.toggleFullscreen(context).then((_) {
+      if (mounted) setState(() => _isFullscreen = !_isFullscreen);
+    });
   }
 
   String _formatDuration(Duration d) {
@@ -646,6 +310,7 @@ class _VideoPlayerOfficialPageState
   @override
   Widget build(BuildContext context) {
     final video = ref.watch(videoByIdProvider(widget.videoId));
+    final initialized = _strategy.isInitialized;
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.space): _togglePlay,
@@ -659,17 +324,12 @@ class _VideoPlayerOfficialPageState
             _seekRelative(const Duration(seconds: 10)),
         const SingleActivator(LogicalKeyboardKey.keyK): _togglePlay,
         const SingleActivator(LogicalKeyboardKey.arrowUp, control: true): () {
-          _setVolume(((_volume + 0.1) * 10).roundToDouble() / 10
-              .clamp(0.0, 1.0));
+          _setVolume(((_volume + 0.1) * 10).roundToDouble() / 10);
         },
         const SingleActivator(LogicalKeyboardKey.arrowDown, control: true): () {
-          _setVolume(((_volume - 0.1) * 10).roundToDouble() / 10
-              .clamp(0.0, 1.0));
+          _setVolume(((_volume - 0.1) * 10).roundToDouble() / 10);
         },
-        const SingleActivator(LogicalKeyboardKey.keyF): () {
-          setState(() => _isFullscreen = !_isFullscreen);
-          _toggleFullscreen();
-        },
+        const SingleActivator(LogicalKeyboardKey.keyF): _toggleFullscreen,
         const SingleActivator(LogicalKeyboardKey.keyM): _toggleMute,
       },
       child: Focus(
@@ -699,8 +359,8 @@ class _VideoPlayerOfficialPageState
                     child: SizedBox(
                       width: double.infinity,
                       height: double.infinity,
-                      child: _initialized && _controller != null
-                          ? vp.VideoPlayer(_controller!)
+                      child: initialized
+                          ? _strategy.videoView
                           : Container(
                               color: Colors.black,
                               child: const Center(
@@ -716,7 +376,7 @@ class _VideoPlayerOfficialPageState
                             ),
                     ),
                   ),
-                  if (!_isPlaying && _initialized)
+                  if (!_isPlaying && initialized)
                     Center(
                       child: GestureDetector(
                         onTap: _togglePlay,
@@ -805,11 +465,7 @@ class _VideoPlayerOfficialPageState
                                         tooltip: '投屏',
                                       ),
                                       IconButton(
-                                        onPressed: () {
-                                          setState(() => _isFullscreen =
-                                              !_isFullscreen);
-                                          _toggleFullscreen();
-                                        },
+                                        onPressed: _toggleFullscreen,
                                         icon: Icon(
                                           _isFullscreen
                                               ? Icons.close_fullscreen_rounded
@@ -832,8 +488,7 @@ class _VideoPlayerOfficialPageState
                                     child: _SkipButton(
                                       direction: SkipDirection.prev,
                                       onTap: _isPlaying
-                                          ? () =>
-                                              _skipNextOrPrev(next: false)
+                                          ? () => _skipNextOrPrev(next: false)
                                           : null,
                                     ),
                                   ),
@@ -985,8 +640,7 @@ class _VideoPlayerOfficialPageState
     final totalInMs = _total.inMilliseconds;
     final posInMs = _position.inMilliseconds;
     final max = totalInMs > 0 ? totalInMs.toDouble() : 1.0;
-    final v = posInMs.toDouble().clamp(0.0, max);
-    final value = v / max;
+    final value = posInMs.toDouble().clamp(0.0, max) / max;
     return Stack(
       alignment: Alignment.center,
       children: [
@@ -998,8 +652,8 @@ class _VideoPlayerOfficialPageState
               inactiveTrackColor: Colors.white38,
               trackHeight: 4,
               thumbColor: AppTheme.primaryRed,
-              thumbShape: const RoundSliderThumbShape(
-                  enabledThumbRadius: 6, elevation: 2),
+              thumbShape:
+                  const RoundSliderThumbShape(enabledThumbRadius: 6, elevation: 2),
               overlayColor: AppTheme.primaryRed.withOpacity(0.2),
               overlayShape:
                   const RoundSliderOverlayShape(overlayRadius: 12),
@@ -1228,8 +882,8 @@ class _SkipButtonState extends State<_SkipButton> {
             child: Container(
               margin: EdgeInsets.only(
                   right: isNext ? 32 : 0, left: isNext ? 0 : 32),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 10),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
                 color: Colors.black45,
                 borderRadius: BorderRadius.circular(8),

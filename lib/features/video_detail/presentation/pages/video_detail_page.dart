@@ -287,7 +287,7 @@ class _DetailHero extends StatelessWidget {
                 Row(
                   children: [
                     ElevatedButton.icon(
-                      onPressed: () => context.push('/player/${video.id}'),
+                      onPressed: () => context.push('/player-mk/${video.id}'),
                       icon: const Icon(Icons.play_arrow_rounded, size: 28),
                       label: const Text(
                         '播放',

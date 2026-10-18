@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import 'dart:async';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/models/video_quality.dart';
@@ -33,6 +34,8 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
   StreamSubscription<Duration>? _durationSub;
   StreamSubscription<double>? _volumeSub;
   StreamSubscription<Playlist>? _playlistSub;
+  StreamSubscription<Tracks>? _tracksSub;
+  bool _trackSelectionDone = false;
 
   bool _initialized = false;
   bool _controlsVisible = true;
@@ -40,6 +43,8 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
   bool _isPlaying = false;
   Duration _position = Duration.zero;
   Duration _total = Duration.zero;
+  bool _wasPlayingBeforeSeek = false;
+  Duration? _seekPreviewPosition;
   double _volume = 100.0;
   bool _muted = false;
   double _playbackSpeed = 1.0;
@@ -56,17 +61,20 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
     super.initState();
     _player = Player(
       configuration: const PlayerConfiguration(
-        logLevel: MPVLogLevel.info,
+        logLevel: MPVLogLevel.debug,
       ),
     );
     _videoController = VideoController(
       _player,
       configuration: const VideoControllerConfiguration(
+        vo: 'gpu',
+        hwdec: 'no',
         enableHardwareAcceleration: true,
       ),
     );
 
     _playingSub = _player.stream.playing.listen((e) {
+      debugPrint('[VP] playing: $e');
       if (!mounted) return;
       setState(() => _isPlaying = e);
     });
@@ -75,6 +83,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
       setState(() => _position = e);
     });
     _durationSub = _player.stream.duration.listen((e) {
+      debugPrint('[VP] duration received: ${e.inSeconds}s');
       if (!mounted) return;
       setState(() {
         _total = e;
@@ -86,8 +95,62 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
       setState(() => _volume = e);
     });
     _playlistSub = _player.stream.playlist.listen((e) {
+      debugPrint('[VP] playlist: index=${e.index}, medias=${e.medias.length}');
       if (!mounted) return;
       setState(() => _initialized = e.index >= 0 && e.medias.isNotEmpty);
+    });
+    // 调试：监听错误和视频参数
+    _player.stream.error.listen((e) {
+      debugPrint('[VP] ERROR: $e');
+    });
+    _player.stream.videoParams.listen((e) {
+      debugPrint('[VP] videoParams: w=${e.w} h=${e.h} dw=${e.dw} dh=${e.dh} rotate=${e.rotate}');
+      if (e.dh != null && e.dh != 0) {
+        debugPrint('[VP] 当前加载轨道分辨率: ${e.dw}x${e.dh} (${e.dh}p)');
+        if (e.dh != 720) {
+          debugPrint('[VP] 默认轨道不是720p，已通过 hls-bitrate 选择最接近720p的轨道');
+        }
+      }
+    });
+    _player.stream.buffering.listen((e) {
+      debugPrint('[VP] buffering: $e');
+    });
+    _player.stream.log.listen((e) {
+      debugPrint('[VP][mpv][${e.level}] ${e.text}');
+    });
+    // HLS 轨道选择：枚举所有视频轨道，找到最接近720p的
+    _tracksSub = _player.stream.tracks.listen((tracks) {
+      if (_trackSelectionDone) return;
+      final videoTracks = tracks.video.where((t) => t.h != null && t.h! > 0).toList();
+      if (videoTracks.isEmpty) {
+        debugPrint('[VP] 无可解析分辨率的视频轨道（HLS变体可能未在track-list中暴露）');
+        return;
+      }
+      debugPrint('[VP] 可用视频轨道:');
+      for (final t in videoTracks) {
+        debugPrint('[VP]   id=${t.id} ${t.w}x${t.h} bitrate=${t.bitrate} default=${t.isDefault}');
+      }
+      // 找到高度最接近720的轨道
+      VideoTrack? closest;
+      int minDiff = 1 << 30;
+      for (final t in videoTracks) {
+        final diff = (t.h! - 720).abs();
+        if (diff < minDiff) {
+          minDiff = diff;
+          closest = t;
+        }
+      }
+      if (closest != null) {
+        final current = _player.state.track.video;
+        debugPrint('[VP] 最接近720p的轨道: id=${closest.id} ${closest.w}x${closest.h}, 当前轨道: id=${current.id} ${current.w}x${current.h}');
+        if (current.id != closest.id) {
+          debugPrint('[VP] 切换到最接近720p的轨道');
+          _player.setVideoTrack(closest);
+        } else {
+          debugPrint('[VP] 当前轨道已是最接近720p的轨道');
+        }
+        _trackSelectionDone = true;
+      }
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -103,6 +166,11 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
     _durationSub?.cancel();
     _volumeSub?.cancel();
     _playlistSub?.cancel();
+    _tracksSub?.cancel();
+    // 先停止播放，确保音频立即停止
+    try {
+      _player.stop();
+    } catch (_) {}
     _player.dispose();
     super.dispose();
   }
@@ -172,12 +240,42 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
       _total = Duration.zero;
       _isPlaying = false;
       _currentUrl = url;
+      _trackSelectionDone = false;
     });
     try {
+      // 尝试修复 TLS 握手问题
+      try {
+        // ignore: avoid_dynamic_calls
+        await (_player.platform as dynamic).setProperty('tls-verify', 'no');
+        debugPrint('[VP] setProperty tls-verify=no OK');
+      } catch (e) {
+        debugPrint('[VP] setProperty tls-verify=no error: $e');
+      }
+      // 强制使用 OpenGL ES 渲染（避免 Vulkan 兼容性问题）
+      try {
+        // ignore: avoid_dynamic_calls
+        await (_player.platform as dynamic).setProperty('gpu-api', 'opengl');
+        debugPrint('[VP] setProperty gpu-api=opengl OK');
+      } catch (e) {
+        debugPrint('[VP] setProperty gpu-api=opengl error: $e');
+      }
+      // HLS: 预定位720p轨道。设置最大码率上限，mpv会选择 <= 该码率的最高质量变体。
+      // 720p 通常码率在 1500~5000 kbps，1080p 通常 > 5000 kbps。
+      // 这里设为 5000 kbps，优先选择720p；若流中无720p，则选择最接近且不超过此码率的轨道。
+      if (_isHlsUrl(url)) {
+        try {
+          // ignore: avoid_dynamic_calls
+          await (_player.platform as dynamic).setProperty('hls-bitrate', '5000000');
+          debugPrint('[VP] setProperty hls-bitrate=5000000 (target 720p) OK');
+        } catch (e) {
+          debugPrint('[VP] setProperty hls-bitrate error: $e');
+        }
+      }
       await _player.open(
         Media(url, httpHeaders: const {}),
         play: autoPlay,
       );
+      debugPrint('[VP] player.open done, url=$url');
       final speed = playbackSpeed ?? _playbackSpeed;
       if ((speed - 1.0).abs() > 0.001) {
         try { await _player.setRate(speed); } catch (_) {}
@@ -262,11 +360,6 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
     _resetControlsTimer();
     final t = _clampDuration(_position + d, Duration.zero, _total);
     _player.seek(t);
-  }
-
-  void _seekTo(Duration d) {
-    _resetControlsTimer();
-    _player.seek(d);
   }
 
   void _toggleMute() {
@@ -378,33 +471,30 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Center(
-                    child: SizedBox(
-                      width: double.infinity,
-                      height: double.infinity,
-                      child: _initialized
-                          ? Video(
+                  SizedBox.expand(
+                    child: _initialized
+                        ? IgnorePointer(
+                            child: Video(
                               controller: _videoController,
                               controls: NoVideoControls,
                               fit: BoxFit.contain,
                               fill: Colors.black,
                               alignment: Alignment.center,
-                              aspectRatio: 16 / 9,
-                            )
-                          : Container(
-                              color: Colors.black,
-                              child: const Center(
-                                child: SizedBox(
-                                  width: 48,
-                                  height: 48,
-                                  child: CircularProgressIndicator(
-                                    color: AppTheme.primaryRed,
-                                    strokeWidth: 3,
-                                  ),
+                            ),
+                          )
+                        : Container(
+                            color: Colors.black,
+                            child: const Center(
+                              child: SizedBox(
+                                width: 48,
+                                height: 48,
+                                child: CircularProgressIndicator(
+                                  color: AppTheme.primaryRed,
+                                  strokeWidth: 3,
                                 ),
                               ),
                             ),
-                    ),
+                          ),
                   ),
                   if (!_isPlaying && _initialized)
                     Center(
@@ -424,6 +514,36 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
                         ),
                       ),
                     ),
+                  // 独立的返回按钮，始终可点击（不在 IgnorePointer 内）
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    child: SafeArea(
+                      bottom: false,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 10, 0, 0),
+                        child: IconButton(
+                          onPressed: () {
+                            debugPrint('[VP] 返回按钮点击');
+                            // 立即停止播放（不等待，避免阻塞导航）
+                            _player.stop().catchError((_) {});
+                            // 用 go_router 的 pop 返回上一页
+                            if (context.canPop()) {
+                              context.pop();
+                            } else {
+                              context.go('/home');
+                            }
+                          },
+                          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                          color: Colors.white,
+                          iconSize: 22,
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.black54,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                   AnimatedOpacity(
                     duration: const Duration(milliseconds: 200),
                     opacity: _controlsVisible ? 1.0 : 0.0,
@@ -452,21 +572,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
                                       const EdgeInsets.fromLTRB(16, 10, 24, 0),
                                   child: Row(
                                     children: [
-                                      IconButton(
-                                        onPressed: () {
-                                          context.canPop()
-                                              ? context.pop()
-                                              : context.go('/home');
-                                        },
-                                        icon: const Icon(
-                                            Icons.arrow_back_ios_new_rounded),
-                                        color: Colors.white,
-                                        iconSize: 22,
-                                        style: IconButton.styleFrom(
-                                          backgroundColor: Colors.black26,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 16),
+                                      const SizedBox(width: 52),
                                       if (video != null)
                                         Expanded(
                                           child: Column(
@@ -671,7 +777,9 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
 
   Widget _buildProgress() {
     final totalInMs = _total.inMilliseconds;
-    final posInMs = _position.inMilliseconds;
+    // 拖拽时使用预览位置，否则使用实际播放位置
+    final displayPos = _seekPreviewPosition ?? _position;
+    final posInMs = displayPos.inMilliseconds;
     final max = totalInMs > 0 ? totalInMs.toDouble() : 1.0;
     final v = posInMs.toDouble();
     final clamped = v < 0.0
@@ -699,12 +807,32 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
             ),
             child: Slider(
               value: value,
-              onChanged: (v) {
-                final t = Duration(milliseconds: (v * totalInMs).round());
-                _seekTo(t);
+              onChangeStart: (_) {
+                _controlsTimer?.cancel();
+                // 记录拖拽前的播放状态，暂停播放
+                _wasPlayingBeforeSeek = _isPlaying;
+                if (_isPlaying) {
+                  _player.pause();
+                }
               },
-              onChangeStart: (_) => _controlsTimer?.cancel(),
-              onChangeEnd: (_) => _resetControlsTimer(),
+              onChanged: (v) {
+                // 拖拽过程中只更新 UI，不实际 seek
+                final t = Duration(milliseconds: (v * totalInMs).round());
+                if (mounted) {
+                  setState(() => _seekPreviewPosition = t);
+                }
+              },
+              onChangeEnd: (v) {
+                final t = Duration(milliseconds: (v * totalInMs).round());
+                _seekPreviewPosition = null;
+                _player.seek(t).then((_) {
+                  // seek 完成后，如果之前在播放则恢复播放
+                  if (_wasPlayingBeforeSeek && mounted) {
+                    _player.play();
+                  }
+                });
+                _resetControlsTimer();
+              },
             ),
           ),
         ),

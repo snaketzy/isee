@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/platform/platform.dart';
 import '../../../content/data/providers/content_providers.dart';
 import '../../../content/domain/entities/video_content.dart';
 import '../../../content/presentation/widgets/video_card.dart';
@@ -34,26 +35,29 @@ class _HomePageState extends ConsumerState<HomePage> {
     final hero = ref.watch(heroBannerProvider);
     final categories = ref.watch(homeCategoriesProvider);
     final topTen = ref.watch(topTenProvider);
+    final isMobile = Breakpoints.isMobile(context);
 
     return SingleChildScrollView(
       controller: _scrollController,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _HeroBanner(video: hero),
+          _HeroBanner(video: hero, isMobile: isMobile),
           const SizedBox(height: 8),
           _CategoryRow(
             title: categories.firstWhere((c) => c.id == 'cat_top10').name,
             videos: topTen,
             showRank: true,
+            isMobile: isMobile,
           ),
           ...categories
               .where((c) => c.id != 'cat_top10' && c.videos.isNotEmpty)
               .map((c) => _CategoryRow(
                     title: c.name,
                     videos: c.videos,
+                    isMobile: isMobile,
                   )),
-          const SizedBox(height: 80),
+          SizedBox(height: isMobile ? 100 : 80),
         ],
       ),
     );
@@ -62,7 +66,8 @@ class _HomePageState extends ConsumerState<HomePage> {
 
 class _HeroBanner extends StatefulWidget {
   final VideoContent video;
-  const _HeroBanner({required this.video});
+  final bool isMobile;
+  const _HeroBanner({required this.video, required this.isMobile});
 
   @override
   State<_HeroBanner> createState() => _HeroBannerState();
@@ -74,11 +79,18 @@ class _HeroBannerState extends State<_HeroBanner> {
   @override
   Widget build(BuildContext context) {
     final screenW = MediaQuery.of(context).size.width;
-    final bannerH = screenW > 1200
-        ? 640.0
-        : screenW > 800
-            ? 520.0
-            : 420.0;
+    final isMobile = widget.isMobile;
+    final bannerH = isMobile
+        ? 520.0
+        : screenW > 1200
+            ? 640.0
+            : screenW > 800
+                ? 520.0
+                : 420.0;
+    final titleSize = isMobile ? 28.0 : (screenW > 1200 ? 56.0 : 44.0);
+    final contentWidth = isMobile ? screenW * 0.92 : screenW * 0.50;
+    final contentLeft = isMobile ? 16.0 : screenW * 0.05;
+    final contentBottom = isMobile ? 100.0 : 120.0;
 
     return SizedBox(
       width: double.infinity,
@@ -129,9 +141,9 @@ class _HeroBannerState extends State<_HeroBanner> {
             ),
           ),
           Positioned(
-            left: screenW * 0.05,
-            bottom: 120,
-            right: screenW * 0.45,
+            left: contentLeft,
+            bottom: contentBottom,
+            width: contentWidth,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -142,11 +154,11 @@ class _HeroBannerState extends State<_HeroBanner> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 3),
                         color: AppTheme.primaryRed,
-                        child: const Text(
+                        child: Text(
                           'iSEE 热门榜 TOP 10',
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: 12,
+                            fontSize: isMobile ? 10 : 12,
                             fontWeight: FontWeight.w900,
                             letterSpacing: 1,
                           ),
@@ -154,16 +166,16 @@ class _HeroBannerState extends State<_HeroBanner> {
                       ),
                     ],
                   ),
-                const SizedBox(height: 12),
+                SizedBox(height: isMobile ? 10 : 12),
                 Text(
                   widget.video.title,
-                  style: const TextStyle(
-                    fontSize: 56,
+                  style: TextStyle(
+                    fontSize: titleSize,
                     fontWeight: FontWeight.w900,
                     color: AppTheme.textPrimary,
                     letterSpacing: -1.5,
                     height: 1.05,
-                    shadows: [
+                    shadows: const [
                       Shadow(
                         blurRadius: 18,
                         color: Colors.black54,
@@ -171,7 +183,7 @@ class _HeroBannerState extends State<_HeroBanner> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
+                SizedBox(height: isMobile ? 10 : 16),
                 Row(
                   children: [
                     Container(
@@ -221,46 +233,55 @@ class _HeroBannerState extends State<_HeroBanner> {
                     ],
                   ],
                 ),
-                const SizedBox(height: 14),
+                SizedBox(height: isMobile ? 8 : 14),
                 SizedBox(
-                  width: 480,
+                  width: isMobile ? double.infinity : 480,
                   child: Text(
                     widget.video.description,
-                    maxLines: 3,
+                    maxLines: isMobile ? 2 : 3,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: AppTheme.textPrimary,
-                      fontSize: 16,
+                      fontSize: isMobile ? 13 : 16,
                       fontWeight: FontWeight.w400,
                       height: 1.4,
-                      shadows: [
+                      shadows: const [
                         Shadow(blurRadius: 8, color: Colors.black45),
                       ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 22),
-                Row(
+                SizedBox(height: isMobile ? 14 : 22),
+                Wrap(
+                  spacing: isMobile ? 8 : 12,
+                  runSpacing: 8,
                   children: [
                     ElevatedButton.icon(
-                      onPressed: () => context.push('/player/${widget.video.id}'),
-                      icon: const Icon(Icons.play_arrow_rounded, size: 28),
-                      label: const Text(
+                      onPressed: () => context.push('/player-mk/${widget.video.id}'),
+                      icon: Icon(Icons.play_arrow_rounded,
+                          size: isMobile ? 22 : 28),
+                      label: Text(
                         '播放',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                        style: TextStyle(
+                            fontSize: isMobile ? 14 : 16,
+                            fontWeight: FontWeight.w700),
                       ),
                       style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.fromLTRB(20, 10, 28, 10),
+                        padding: EdgeInsets.fromLTRB(
+                            isMobile ? 16 : 20,
+                            isMobile ? 8 : 10,
+                            isMobile ? 22 : 28,
+                            isMobile ? 8 : 10),
                       ),
                     ),
-                    const SizedBox(width: 12),
                     OutlinedButton.icon(
                       onPressed: () => context.push('/detail/${widget.video.id}'),
-                      icon: const Icon(Icons.info_outline_rounded, size: 24),
-                      label: const Text(
+                      icon: Icon(Icons.info_outline_rounded,
+                          size: isMobile ? 20 : 24),
+                      label: Text(
                         '详细信息',
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: isMobile ? 14 : 16,
                           fontWeight: FontWeight.w700,
                           color: AppTheme.textPrimary,
                         ),
@@ -272,16 +293,16 @@ class _HeroBannerState extends State<_HeroBanner> {
             ),
           ),
           Positioned(
-            right: 36,
-            bottom: 140,
+            right: isMobile ? 16 : 36,
+            bottom: isMobile ? 110 : 140,
             child: IconButton(
               onPressed: () => setState(() => _muted = !_muted),
               icon: Icon(
                 _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-                size: 28,
+                size: isMobile ? 22 : 28,
                 color: AppTheme.textSecondary,
               ),
-              padding: const EdgeInsets.all(10),
+              padding: EdgeInsets.all(isMobile ? 8 : 10),
               style: IconButton.styleFrom(
                 side: const BorderSide(color: AppTheme.textSecondary),
                 shape: const CircleBorder(),
@@ -290,7 +311,7 @@ class _HeroBannerState extends State<_HeroBanner> {
           ),
           Positioned(
             right: 0,
-            bottom: 140,
+            bottom: isMobile ? 110 : 140,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
@@ -328,11 +349,13 @@ class _CategoryRow extends StatefulWidget {
   final String title;
   final List<VideoContent> videos;
   final bool showRank;
+  final bool isMobile;
 
   const _CategoryRow({
     required this.title,
     required this.videos,
     this.showRank = false,
+    this.isMobile = false,
   });
 
   @override
@@ -383,19 +406,20 @@ class _CategoryRowState extends State<_CategoryRow> {
   @override
   Widget build(BuildContext context) {
     if (widget.videos.isEmpty) return const SizedBox.shrink();
+    final isMobile = widget.isMobile;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 14),
+      padding: EdgeInsets.symmetric(vertical: isMobile ? 10 : 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 10),
+            padding: EdgeInsets.fromLTRB(isMobile ? 16 : 24, 0, isMobile ? 16 : 24, isMobile ? 8 : 10),
             child: Row(
               children: [
                 Text(
                   widget.title,
-                  style: const TextStyle(
-                    fontSize: 20,
+                  style: TextStyle(
+                    fontSize: isMobile ? 17 : 20,
                     fontWeight: FontWeight.w700,
                     color: AppTheme.textPrimary,
                   ),
@@ -416,30 +440,35 @@ class _CategoryRowState extends State<_CategoryRow> {
             ),
           ),
           SizedBox(
-            height: widget.showRank ? 380 : 330,
+            height: isMobile
+                ? (widget.showRank ? 300 : 260)
+                : (widget.showRank ? 380 : 330),
             child: Stack(
               children: [
                 Positioned.fill(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    padding: EdgeInsets.symmetric(
+                        horizontal: isMobile ? 16 : 24),
                     child: ListView.separated(
                       controller: _controller,
                       scrollDirection: Axis.horizontal,
                       itemCount: widget.videos.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 12),
+                      separatorBuilder: (_, __) =>
+                          SizedBox(width: isMobile ? 8 : 12),
                       itemBuilder: (ctx, i) {
                         final v = widget.videos[i];
                         return VideoCard(
                           video: v,
                           showRank: widget.showRank,
                           rank: v.topTenRank ?? (i + 1),
+                          compact: isMobile,
                         );
                       },
                     ),
                   ),
                 ),
-                if (_showLeftArrow) _buildArrow(true),
-                if (_showRightArrow) _buildArrow(false),
+                if (!isMobile && _showLeftArrow) _buildArrow(true),
+                if (!isMobile && _showRightArrow) _buildArrow(false),
               ],
             ),
           ),

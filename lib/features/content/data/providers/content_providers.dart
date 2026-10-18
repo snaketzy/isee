@@ -15,8 +15,7 @@ final videoByIdProvider = Provider.family<VideoContent?, String>((ref, id) {
 });
 
 final heroBannerProvider = Provider<VideoContent>((ref) {
-  final trending = MockData.categories.firstWhere((c) => c.id == 'cat_trending').videos;
-  return trending.first;
+  return MockData.getVideoById('v002')!;
 });
 
 final topTenProvider = Provider<List<VideoContent>>((ref) {
