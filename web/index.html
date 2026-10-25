@@ -32,9 +32,46 @@
         : (window.__iHlsStore = Object.create(null));
       var __i_next_id = 1;
       var __i_hls_weak = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+      // #region debug-point A:reporter
+      var __i_dbg_run = 'pre';
+      function __i_dbg(hyp, loc, msg, data) {
+        try {
+          fetch('http://127.0.0.1:7777/event', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId: 'hls-quality-lock', runId: __i_dbg_run, hypothesisId: hyp, location: loc, msg: '[DEBUG] ' + msg, data: data || {}, ts: Date.now() })
+          }).catch(function () {});
+        } catch (_) {}
+      }
+      // #endregion
+      // #region debug-point B0:media-probe
+      (function () {
+        var t0 = Date.now();
+        function snap(tag) {
+          try {
+            var vs = document.querySelectorAll('video');
+            var arr = [];
+            for (var i = 0; i < vs.length; i++) {
+              var v = vs[i];
+              arr.push({ src: (v.currentSrc || v.src || '').slice(0, 80), readyState: v.readyState, networkState: v.networkState, err: v.error ? (v.error.code + ':' + String(v.error.message).slice(0, 80)) : null, w: v.videoWidth, h: v.videoHeight, id: v[__i_hls_key] || '' });
+            }
+            __i_dbg('B', 'index.html:media-probe', tag, { t: Date.now() - t0, videos: arr.length, list: arr, hasHls: !!window.Hls, patched: !!(window.Hls && window.Hls.__iPatched__) });
+          } catch (_) {}
+        }
+        document.addEventListener('error', function (e) { var el = e.target; if (el && el.tagName === 'VIDEO') snap('VIDEO_ERROR'); }, true);
+        document.addEventListener('loadedmetadata', function (e) { var el = e.target; if (el && el.tagName === 'VIDEO') snap('VIDEO_METADATA'); }, true);
+        var n = 0;
+        var iv = setInterval(function () { snap('POLL_' + (++n)); if (n >= 8) clearInterval(iv); }, 2500);
+      })();
+      // #endregion
       (function patchHlsCtor() {
         var OrigHls = global.Hls || global.hls;
-        if (!OrigHls || typeof OrigHls !== 'function' || OrigHls.__iPatched__) return;
+        if (!OrigHls || typeof OrigHls !== 'function' || OrigHls.__iPatched__) {
+          // #region debug-point A:patch-skipped
+          __i_dbg('A', 'index.html:patchHlsCtor', 'PATCH_SKIPPED', { hasHls: !!(global.Hls || global.hls), alreadyPatched: !!(global.Hls && global.Hls.__iPatched__) });
+          // #endregion
+          return;
+        }
         function iHls() {
           var a = [];
           for (var i = 0; i < arguments.length; i++) a.push(arguments[i]);
@@ -85,6 +122,9 @@
         global.Hls = iHls;
         global.hls = iHls;
       })();
+      // #region debug-point A:patch-status
+      __i_dbg('A', 'index.html:patchHlsCtor', 'PATCH_DONE', { patched: !!(global.Hls && global.Hls.__iPatched__), ua: navigator.userAgent, hasMSE: (typeof MediaSource !== 'undefined') });
+      // #endregion
       function walkForVideos(root, out) {
         if (!root) return;
         try {
@@ -132,6 +172,9 @@
             if ((aBw * aBh) > (bBw * bBh)) best = v;
           }
         }
+        // #region debug-point C:find-latest
+        __i_dbg('C', 'index.html:findLatestVideo', 'FIND_LATEST', { count: uniq.length, bestW: (best ? (best.videoWidth || 0) : 0), bestH: (best ? (best.videoHeight || 0) : 0), curSrc: (best ? ((best.currentSrc || best.src || '').slice(0, 60)) : ''), hasKey: !!(best && best[__i_hls_key]) });
+        // #endregion
         if (best) return best;
         return (uniq.length > 0) ? uniq[uniq.length - 1] : null;
       }
@@ -190,6 +233,9 @@
                       if (idx >= 0 && Array.isArray(steal.levels) && steal.levels[idx]) {
                         var h = steal.levels[idx].height || 0;
                         if (h > 0) {
+                          // #region debug-point E:level-switched-steal
+                          __i_dbg('E', 'index.html:LEVEL_SWITCHED(steal)', 'LEVEL_SWITCHED', { height: h, level: idx });
+                          // #endregion
                           try { video.dispatchEvent(new CustomEvent('iHlsLevelSwitched', { detail: { height: h, level: idx } })); } catch (_) {}
                           var cbs = video.__iHlsCb;
                           if (typeof cbs === 'function') { try { cbs(h); } catch (_) {} }
@@ -228,6 +274,9 @@
                 if (idx >= 0 && Array.isArray(hls.levels) && hls.levels[idx]) {
                   var h = hls.levels[idx].height || 0;
                   if (h > 0) {
+                    // #region debug-point E:level-switched-new
+                    __i_dbg('E', 'index.html:LEVEL_SWITCHED(new)', 'LEVEL_SWITCHED', { height: h, level: idx });
+                    // #endregion
                     try { video.dispatchEvent(new CustomEvent('iHlsLevelSwitched', { detail: { height: h, level: idx } })); } catch (_) {}
                     var cbs = video.__iHlsCb;
                     if (typeof cbs === 'function') { try { cbs(h); } catch (_) {} }
@@ -291,10 +340,18 @@
       function lockLevel(video, targetHeight) {
         if (!video) return false;
         var hls = getHls(video);
-        if (!hls) return !!nativeCanPlayHls(video);
+        if (!hls) {
+          // #region debug-point C:lock-no-hls
+          __i_dbg('C', 'index.html:lockLevel', 'LOCK_NO_HLS', { target: targetHeight, native: nativeCanPlayHls(video), readKey: readKey(video) || '' });
+          // #endregion
+          return !!nativeCanPlayHls(video);
+        }
         if (hls.proxy) return false;
         var levels = levelsOf(video);
         if (!levels || !Array.isArray(levels) || levels.length === 0) {
+          // #region debug-point D:lock-no-levels
+          __i_dbg('D', 'index.html:lockLevel', 'LOCK_NO_LEVELS', { target: targetHeight, len: (levels ? levels.length : -1) });
+          // #endregion
           return !!nativeCanPlayHls(video);
         }
         try { hls.capLevelToPlayerSize = false; } catch (_) {}
@@ -320,6 +377,9 @@
           }
         }
         if (bestIdx < 0) return false;
+        // #region debug-point D:lock-level
+        __i_dbg('D', 'index.html:lockLevel', 'LOCK_LEVEL', { target: target, heights: levels.map(function (l) { return (l && l.height) || 0; }), bestIdx: bestIdx, bestH: bestH, curLevelBefore: hls.currentLevel });
+        // #endregion
         try { hls.loadLevel = bestIdx; } catch (_) {}
         try { hls.currentLevel = bestIdx; } catch (e) {
           console.warn('[iSEE HLS] lockLevel currentLevel failed:', e);
@@ -347,17 +407,21 @@
       global.__i_hls_findLatestVideo = function () { return findLatestVideo() || null; };
       global.__i_hls_hasReal = function (video) {
         var v = video || findLatestVideo();
-        if (!v) return false;
-        var k = readKey(v);
-        if (!k) return false;
-        var h = __i_hls_store[k];
-        if (!h) return false;
-        if (h.proxy) return false;
-        return typeof h.levels !== 'undefined';
+        var k = v ? readKey(v) : '';
+        var h = k ? __i_hls_store[k] : null;
+        var res = !!(v && k && h && !h.proxy && typeof h.levels !== 'undefined');
+        // #region debug-point A:has-real
+        __i_dbg('A', 'index.html:__i_hls_hasReal', 'HAS_REAL', { hasVideo: !!v, key: k || '', hasInst: !!h, proxy: !!(h && h.proxy), levelsType: h ? (typeof h.levels) : 'none', result: res });
+        // #endregion
+        return res;
       };
       global.__i_hls_attach = function (video, srcUrl) {
         var url = (typeof srcUrl === 'string') ? srcUrl : String(srcUrl || '');
-        return attach(video, url) || '';
+        var k = attach(video, url) || '';
+        // #region debug-point A:attach-result
+        __i_dbg('A', 'index.html:__i_hls_attach', 'ATTACH_RESULT', { srcLen: url.length, key: k, readKey: (video ? readKey(video) : '') });
+        // #endregion
+        return k;
       };
       global.__i_hls_destroy = function (k) { destroyByKey(String(k || '')); };
       global.__i_hls_destroyAll = function () { destroyAll(); };
