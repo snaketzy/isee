@@ -5,6 +5,7 @@ analyzer:
     - '**/*.g.dart'
     - 'build/**'
     - web/**
+    - android/**
   errors:
     invalid_annotation_target: ignore
     undefined_hidden_name: ignore
